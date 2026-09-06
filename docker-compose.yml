@@ -1,0 +1,28 @@
+# Local development database only. Production topology (Cloudflare, reverse
+# proxy, orchestration) belongs to the Infrastructure phase — see
+# docs/architecture/blueprint.md §18/§19. Redis is intentionally absent
+# (ADR-015 — not introduced until a concrete need exists).
+#
+# Usage: docker compose up -d
+# Then:  cp .env.example .env   (already matches these credentials)
+#        npm run db:migrate
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jawaher
+      POSTGRES_PASSWORD: jawaher_dev_password
+      POSTGRES_DB: jawaher_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - jawaher_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jawaher -d jawaher_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  jawaher_postgres_data:

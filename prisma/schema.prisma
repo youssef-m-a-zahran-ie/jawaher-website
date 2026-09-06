@@ -1,0 +1,24 @@
+// Database foundation only — Phase 1 (Repository & Development Foundation).
+//
+// Deliberately contains NO domain/business models yet. The full commerce
+// schema (catalog projection, cart, orders, customers, payments, shipments,
+// promotions, etc.) belongs to the Backend/Commerce phases per
+// docs/architecture/blueprint.md §19. Adding it here would repeat the
+// previous ERP project's mistake of committing to a schema before the
+// domain model has been implemented and reviewed against real usage.
+//
+// See docs/architecture/data-ownership.md for the conceptual domain model
+// this schema will eventually implement, and docs/architecture/technical-architecture.md
+// §13 for the database conventions (UUID identifiers, integer minor-unit
+// money, normalized phone numbers, soft deletion only where history must
+// survive) that any future model added here must follow.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Connection URL lives in prisma.config.ts (Prisma 7 requirement) for the
+// CLI, and in src/lib/db.ts (via a driver adapter) for the application.
+datasource db {
+  provider = "postgresql"
+}

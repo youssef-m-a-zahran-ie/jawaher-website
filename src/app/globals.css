@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/*
+ * Placeholder neutrals only — the seven official brand colors
+ * (docs/design/design-system.md §2) are not wired in as Tailwind theme
+ * tokens yet. That belongs to the Design System phase
+ * (docs/architecture/blueprint.md §19), not this Foundation phase.
+ */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-almarai);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
