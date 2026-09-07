@@ -121,7 +121,9 @@ See [`docs/planning/commerce-completeness-audit.md`](./docs/planning/commerce-co
 
 ## CI
 
-`.github/workflows/ci.yml` runs lint, typecheck, unit tests, a production build, and the full E2E suite (including a real Postgres service container, so the health check's *healthy* path — not just its degraded one — is verified there).
+`.github/workflows/ci.yml` defines: install → Prisma generate → lint → typecheck → `prisma db push` (creates the commerce schema's tables in the job's fresh Postgres container — no committed migration exists yet) → `npm run db:seed` → unit + integration tests → production build → E2E. The Prisma-generate/db-push ordering was fixed in Phase 4's review pass — Phase 1's original ordering (tests before `prisma generate`) never mattered when the schema had zero models, but would have broken once real ones existed.
+
+**Verification status:** this repository has no `git remote` configured in this environment, so no push has ever triggered this workflow and no run has been observed — treat it as *written and reasoned about*, not *proven*, until someone with GitHub Actions access confirms a real green run. Every step listed above passes locally in this sandbox except the database-dependent ones (`db push`, seed, integration tests), which need a real Postgres this sandbox doesn't have.
 
 ## Money
 

@@ -16,20 +16,13 @@ import { shippingService } from "@/modules/shipping";
 import { paymentsService } from "@/modules/payments";
 import { CheckoutValidationError } from "@/modules/checkout/types";
 import type { AddressSnapshotInput } from "@/modules/checkout/types";
+import { ZeroTaxPolicy } from "@/modules/checkout/tax-policy";
+import type { TaxPolicy } from "@/modules/checkout/tax-policy";
 
-const CHECKOUT_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour to fill the form — independent of the 15-minute inventory-reservation TTL (commerce-completeness-audit.md §5).
+const CHECKOUT_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour to fill the form — independent of the inventory-reservation TTL (commerce-completeness-audit.md §5).
 
-/**
- * Real tax policy is an open business decision (commerce-completeness-audit.md
- * §4) — this always returns zero. That is NOT a tax-rate decision; it is a
- * wired-but-inert seam so turning on a real rate later is a one-function
- * change. Do not delete this indirection to "simplify" — its entire
- * purpose is to exist as the one place a real rate gets plugged in.
- */
-function calculateTax(subtotalAfterDiscount: Money): Money {
-  void subtotalAfterDiscount; // seam for a real rate — see the comment above.
-  return Money.zero();
-}
+/** See tax-policy.ts — swapping this one line is how a real policy replaces the temporary zero-tax one, once that business decision lands. */
+const taxPolicy: TaxPolicy = new ZeroTaxPolicy();
 
 export type OrderSummary = {
   orderId: string;
@@ -157,7 +150,7 @@ export const checkoutService = {
       const discount = Money.fromMinor(discountAmountMinor);
       const shippingFee = Money.fromMinor(session.shippingFeeAmountMinor);
       const subtotalAfterDiscount = subtotal.subtract(discount);
-      const tax = calculateTax(subtotalAfterDiscount);
+      const tax = taxPolicy.calculate({ subtotalAfterDiscount, governorate: session.governorate ?? undefined });
       const total = subtotalAfterDiscount.add(shippingFee).add(tax);
 
       const orderNumber = await generateUniqueOrderNumber(tx);

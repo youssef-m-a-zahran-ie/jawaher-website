@@ -68,6 +68,31 @@ describe.skipIf(!dbAvailable)("checkout", () => {
     expect(cartRow.status).toBe("CONVERTED");
   }, 15_000);
 
+  it("order monetary snapshots never change when the current product price changes afterward", async () => {
+    const zone = await createTestShippingZone({ feeEgp: 30 });
+    shippingZoneIds.push(zone.id);
+    const { category, variant, session, checkoutSession } = await setUpReadyCheckout(zone.governorate, 5, 100);
+    categoryIds.push(category.id);
+    sessionIds.push(session.id);
+
+    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, {
+      method: "COD",
+      idempotencyKey: `test-snapshot-${randomUUID()}`,
+    });
+    const totalAtPurchase = order.totalAmountMinor;
+
+    // The price changes well after the order was placed — a real catalog update, a promotion ending, anything.
+    await db.variant.update({ where: { id: variant.id }, data: { priceAmountMinor: 999900 } });
+
+    const orderAfterPriceChange = await db.order.findUniqueOrThrow({
+      where: { id: order.orderId },
+      include: { items: true },
+    });
+
+    expect(orderAfterPriceChange.totalAmountMinor).toBe(totalAtPurchase);
+    expect(orderAfterPriceChange.items[0].unitPriceAmountMinor).toBe(10000); // still 100.00 EGP, the price at purchase — never the new 9999.00
+  }, 15_000);
+
   it("a duplicate submission with the same Idempotency-Key returns the original order, never a second one", async () => {
     const zone = await createTestShippingZone({ feeEgp: 40 });
     shippingZoneIds.push(zone.id);

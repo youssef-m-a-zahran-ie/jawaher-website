@@ -32,6 +32,14 @@ const envSchema = z.object({
   // — see that route's own check.
   INTERNAL_API_SECRET: z.string().min(16).optional(),
 
+  // How long a soft inventory hold survives before it's released
+  // (src/modules/catalog/inventory.ts) — Phase 1 New Finding #1's fix.
+  // NOT a finalized business rule: 15 (the default below) is the smallest
+  // technically-safe value the finding itself suggested, not a confirmed
+  // duration — see docs/planning/commerce-completeness-audit.md §5. Change
+  // this env var, not the code, once the business confirms a real value.
+  INVENTORY_RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().optional(),
+
   // --- Reserved for later phases (optional until implemented) ---
   SESSION_SECRET: z.string().min(1).optional(),
   OTP_PROVIDER_API_KEY: z.string().min(1).optional(),

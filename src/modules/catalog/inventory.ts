@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { env } from "@/lib/env";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -14,8 +15,19 @@ export type AvailabilityState = "in_stock" | "low_stock" | "out_of_stock";
  */
 export const LOW_STOCK_THRESHOLD = 5;
 
-/** Phase 1 New Finding #1's recommended default — see the audit's §5 for why this stays an open decision. */
-export const RESERVATION_TTL_MS = 15 * 60 * 1000;
+/**
+ * Phase 1 New Finding #1's fix. The ONLY place this duration is defined —
+ * every reservation's `expiresAt` is computed from this single constant,
+ * nowhere else in the codebase hardcodes a TTL value (verified: grep for
+ * "RESERVATION_TTL"/"15 \* 60" turns up only this file). Centrally
+ * configurable via `INVENTORY_RESERVATION_TTL_MINUTES` (src/lib/env.ts) —
+ * changing the duration is an environment-variable change, never a code or
+ * schema change. Defaults to 15 minutes, the smallest technically-safe
+ * value the original finding suggested — this remains an OPEN BUSINESS
+ * DECISION (docs/planning/commerce-completeness-audit.md §5), not a
+ * confirmed policy; the default is a placeholder, not an answer.
+ */
+export const RESERVATION_TTL_MS = (env.INVENTORY_RESERVATION_TTL_MINUTES ?? 15) * 60 * 1000;
 
 export function deriveAvailability(availableQuantity: number): AvailabilityState {
   if (availableQuantity <= 0) return "out_of_stock";
