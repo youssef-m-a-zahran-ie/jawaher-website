@@ -4,7 +4,7 @@ Purpose: catch what the previous ERP project didn't — architectural decisions 
 
 Classification legend: **MVP** (required for launch) · **Production-required** (needed before real traffic, may land just after MVP) · **Later** (deliberately post-launch) · **Out of scope** (not part of this project) · **Open decision** (business/legal input needed) · **Already covered** (an existing doc already addresses it — cited).
 
-Status: Stage: Phase 1. Last updated: 2026-09-07.
+Status: Stage: Phase 1, + Phase 2 frontend-implications check appended. Last updated: 2026-09-07.
 
 ---
 
@@ -116,3 +116,37 @@ These are genuine gaps surfaced while performing this audit — not restatements
 ## How to use this document
 
 This is not a backlog and not a schema. It exists so that, before the Backend/Commerce/ERP Integration phases start building against the domain model in `docs/architecture/data-ownership.md`, every item above has been consciously classified rather than silently assumed. New Findings #1–#9 should be reviewed by whoever authorizes the next phase; none of them block Phase 1 (Repository & Development Foundation) itself.
+
+---
+
+## Phase 2 frontend-implication check
+
+Phase 2 built the design-token system and reusable UI primitives (`src/ui/primitives/`, `src/ui/commerce/`), not real pages or business logic. This check goes through the same feature list with one question: **does anything shipped this phase make a future feature harder to build than it would otherwise be?** It does not re-decide anything already classified above.
+
+| Area | UI foundation support | Gap? |
+|---|---|---|
+| Catalog / product display | `ProductCardData` type + `ProductCard`, `Card`, `PriceDisplay` | None |
+| Variants | `hasMultipleVariants` flag already in `ProductCardData`; `Tag` (selectable chip, `aria-pressed`) is the right shape for PDP variant selection per `ux-decisions.md` §A | None — not wired to a real PDP yet, correctly, since no PDP exists |
+| Pricing | `PriceDisplay` (current + struck-through compare-at); `Money` integer-minor-units foundation from Phase 1 | None |
+| Discounts / coupons | `Badge`, `Tag`, `Input` are generic enough for a coupon field/applied-discount chip | None — no coupon-specific component built, correctly, since no coupon UX is specified yet |
+| Inventory states | `ProductAvailability` (`in_stock`/`low_stock`/`out_of_stock`) already mirrors `data-ownership.md`'s Inventory states, mapped to `Badge` variants | None |
+| Cart | `QuantityControl`, `Drawer` (mobile bottom-sheet pattern), `Toast` (add-to-cart feedback) — exercised together in the showcase's quick-add flow | Undo-on-delete gap — see `ux-decisions.md` Phase 2 finding 1 |
+| Checkout | `Accordion` (`singleOpen`) matches the single-accordion-page requirement; `Input`/`Select`/`Radio`/`Checkbox` cover form fields | None |
+| COD / online payment | `Radio` is the natural fit for payment-method selection | None — no payment-specific UI built, correctly, since the gateway is still an open decision (`ux-decisions.md` §B) |
+| Customer account | `Input`/`Label`/`Checkbox` cover ordinary account forms | **OTP entry pattern not designed** — flagged in `ux-decisions.md` Phase 2 finding 7, not a component gap yet since no UX pattern exists to build against |
+| Addresses | Ordinary form primitives suffice | None |
+| Shipping / order tracking | `Badge`, `EmptyState`, `ErrorState` are generic enough to represent whatever status set the ERP eventually exposes | None at the UI layer — the status *vocabulary* itself is New Finding #6 (Phase 1), unchanged |
+| Returns / refunds | Same generic states apply | None at the UI layer — process itself is New Finding #2 (Phase 1), unchanged |
+| Notifications (in-app) | `Toast` | None — email/SMS templates are outside a UI-primitive system's scope |
+| Search | `Input` covers a plain search box | Autocomplete/suggestions dropdown is a distinct overlay pattern, not built — no conflict, since `ux-specification.md` doesn't request it at MVP |
+| Filtering / sorting | `Checkbox` (multi-select filters), `Select` (sort), `Tag` (active-filter chips) all exist | None at the component level — the composed filter panel/sidebar layout is page-composition, not primitives, correctly deferred |
+| SEO | Not a UI-primitive concern | None |
+| Analytics | Not a UI-primitive concern; event-mapping already documented in `ux-specification.md` §24 | None |
+| Consent / privacy | No cookie-consent banner built | Not a gap yet — this is New Finding #3 (Phase 1), an open legal decision; `Modal` is generic enough to host whatever pattern is chosen once that decision lands, so nothing built this phase blocks it |
+| Accessibility | Built into every primitive (`focus-visible` rings, `aria-*`, keyboard operability, `prefers-reduced-motion`) | None |
+| Responsive / mobile | Mobile-first Tailwind usage throughout; `Drawer` specifically built for the documented mobile pattern | None |
+| ERP sync states visible to customers | Same generic states (`Badge`/`EmptyState`/`ErrorState`) can represent any status the ERP adapter surfaces once built | None at the UI layer |
+
+### Outcome
+
+No feature in the list is made harder by a Phase 2 decision. Two items carry forward as genuine, already-tracked gaps rather than new ones: the Toast undo-action slot (small, additive, deferred to the cart-deletion feature) and OTP entry UX (needs a product decision before it needs a component). Both are recorded in `docs/ux/ux-decisions.md`'s Phase 2 section, not fixed speculatively here.

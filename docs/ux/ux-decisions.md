@@ -2,7 +2,7 @@
 
 Records what this UX stage decided on its own authority, what remains a business decision, what's deferred as a later technical call, and the result of cross-checking [`ux-specification.md`](./ux-specification.md) and [`customer-journeys.md`](./customer-journeys.md) against the architecture and functional requirements docs.
 
-Status: **Stage 0.8.** Last updated: 2026-09-06.
+Status: **Stage 0.8, + Phase 2 consistency check appended.** Last updated: 2026-09-07.
 
 ---
 
@@ -63,3 +63,23 @@ Performed against `docs/architecture/blueprint.md`, `docs/architecture/architect
 ### Outcome
 
 No blocking conflicts. One documentation gap identified (finding 2) — flagged for the Analytics phase, not fixed silently here since it would mean inventing part of the analytics architecture ahead of schedule.
+
+---
+
+## Phase 2 consistency check
+
+Phase 2 (Brand + Design System + UX Implementation Foundation) built the token system and reusable UI primitives (`src/ui/primitives/`, `src/ui/commerce/`) but no real page. This check compares what was built against `ux-specification.md`, `customer-journeys.md`, and this file's §A, to the extent a primitives layer can be checked against a page-level spec.
+
+### Findings (Phase 2)
+
+1. **Destructive-action "undo" affordance — not yet representable, real gap.** §A above requires "destructive cart/address actions get an undo affordance rather than instant, irreversible removal." The Toast foundation shipped this phase (`src/ui/primitives/toast.tsx`) supports `title`/`description`/`variant`/`duration` but has no action-button slot — it can announce that something happened, not offer to reverse it. **Classification: engineering decision, not a business question** — the fix is additive (an optional `action: { label, onClick }` on `ToastOptions`, rendered as a button beside the dismiss ×) and doesn't touch tokens, layout, or any other primitive. Deferred to whichever phase first implements cart/address deletion, since building it now would mean guessing the exact undo semantics (how long is "undo" available? does it block the delete request or reverse it after?) ahead of that feature's real design.
+2. **Sticky CTAs (PDP add-to-cart, checkout total) — correctly not built, no conflict.** §A restricts sticky CTAs to these two exact moments. Phase 2 built the `Button` primitive these CTAs will use, but not the sticky positioning itself, since that's a page-composition concern (PDP/checkout layout) rather than a component-foundation one. No gap — just noting the boundary so it isn't mistaken for an oversight.
+3. **Bottom-sheet mobile pattern — representable.** §A requires filters/cart/menu to use bottom-sheets/drawers on mobile, not full-page navigation. `Drawer` (`src/ui/primitives/drawer.tsx`) is a single component usable for all three; it slides in from the reading-start edge via a logical `translate`, not a hardcoded side, and correctly mirrors under `dir="rtl"` (verified). No gap.
+4. **Checkout single-accordion page — representable.** §A requires checkout as one accordion page, not a multi-page wizard. `Accordion` (`src/ui/primitives/accordion.tsx`) has a `singleOpen` mode matching the "one section open at a time" shape `ux-specification.md`'s checkout section describes. No gap.
+5. **Variant selection as tappable chips — representable.** §A requires PDP variant selection via chips, never a dropdown or product-card control. `Tag` (`src/ui/primitives/tag.tsx`) is a selectable chip with `aria-pressed`, controlled via a `selected` prop — the right shape for this. Not wired into a real PDP yet (no PDP exists), so this is confirmed at the component level only, not the page level.
+6. **Western Arabic numerals for prices/quantities — representable, no special handling needed.** `PriceDisplay` and `QuantityControl` render plain JS number formatting (no locale-specific numeral substitution), which already produces Western Arabic digits (0–9) by default — the recommendation in §A holds without any extra code.
+7. **OTP entry UX — not yet designed, flagged forward rather than guessed.** Neither `ux-specification.md` nor this file specifies whether OTP entry is a single masked input or a 6-box segmented input (both are common patterns). Phase 2 did not build either, correctly — `Input` alone is not that pattern. Recorded here so the Storefront/Customers phase treats OTP entry as a UX decision to make, not an implementation detail to improvise silently.
+
+### Outcome (Phase 2)
+
+One real, actionable gap (finding 1) — small, additive, deferred to the phase that needs it rather than fixed speculatively now. No requirement was silently dropped or narrowed to fit what was built.

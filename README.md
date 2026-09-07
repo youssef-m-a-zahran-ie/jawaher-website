@@ -2,7 +2,7 @@
 
 Arabic-first, RTL, mobile-first e-commerce platform for Jawaher Al Khair (جواهر الخير), a premium Egyptian food brand (dates, honey, oils, nuts, ghee). This README is developer-onboarding documentation — for project context (architecture, requirements, UX, design, decisions), see [`docs/README.md`](./docs/README.md), which is canonical.
 
-**Current phase:** Phase 1 — Repository & Development Foundation. There is no storefront yet by design — see [`docs/planning/feature-completeness-audit.md`](./docs/planning/feature-completeness-audit.md) and [`docs/architecture/blueprint.md`](./docs/architecture/blueprint.md) §19 for what comes next.
+**Current phase:** Phase 2 — Brand + Design System + UX Implementation Foundation. There is no storefront yet by design — this phase built the token system and reusable UI primitives, not real pages. See [`docs/planning/feature-completeness-audit.md`](./docs/planning/feature-completeness-audit.md) and [`docs/architecture/blueprint.md`](./docs/architecture/blueprint.md) §19 for what comes next.
 
 ## Prerequisites
 
@@ -44,9 +44,11 @@ Open <http://localhost:3000>. The one existing API route, `GET /api/v1/health`, 
 ```text
 src/
 ├── app/          # Next.js App Router — routes only, thin (calls into modules/)
-├── modules/      # domain modules (empty in Phase 1 — see docs/architecture/module-boundaries.md)
+├── modules/      # domain modules (still empty — see docs/architecture/module-boundaries.md)
 ├── domain/       # framework-free domain types (e.g. Money)
-├── ui/           # presentation-only components, no data access
+├── ui/
+│   ├── primitives/  # design-system building blocks (Button, Input, Modal, ...)
+│   └── commerce/    # product-card foundation — mock data only, see its own header comment
 ├── lib/          # cross-cutting: env, db, logger, api-response, rate-limit, request-id
 └── proxy.ts      # Next.js 16's renamed `middleware` — request-id propagation only
 prisma/           # schema.prisma (no models yet — see its own header comment)
@@ -67,6 +69,10 @@ The non-negotiable rule, enforced at code review from this phase onward: **the f
   npm run build && npm run start &
   npx playwright test
   ```
+
+## Design system
+
+`npm run dev` then open <http://localhost:3000/dev/design-system> for a living showcase of every token and UI primitive (colors, type scale, buttons, form controls, cards, modal/drawer/toast, RTL/LTR comparison, etc.). It's a development aid only — the route 404s in a production build (see `tests/e2e/design-system-showcase.spec.ts`), so it can never end up live. Component source: `src/ui/primitives/` and `src/ui/commerce/`; tokens: `src/app/globals.css`. See [`docs/design/design-system.md`](./docs/design/design-system.md) for the source-of-truth spec these implement.
 
 ## CI
 

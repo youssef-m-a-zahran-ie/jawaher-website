@@ -3,6 +3,7 @@ import { Almarai } from "next/font/google";
 
 import { Footer } from "@/ui/footer";
 import { Header } from "@/ui/header";
+import { ToastProvider } from "@/ui/primitives/toast";
 
 import "./globals.css";
 
@@ -22,10 +23,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ar" dir="rtl" className={`${almarai.variable} h-full`}>
-      <body className="flex min-h-full flex-col font-sans antialiased">
-        <Header />
-        <main className="flex-1">{children}</main>
-        <Footer />
+      <body className="flex min-h-full flex-col bg-surface font-sans text-text-primary antialiased">
+        <ToastProvider>
+          <Header />
+          <main className="flex-1">{children}</main>
+          <Footer />
+        </ToastProvider>
       </body>
     </html>
   );

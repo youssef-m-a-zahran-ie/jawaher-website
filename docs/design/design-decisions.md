@@ -2,7 +2,7 @@
 
 Records what must be preserved unchanged from the brand guide, what this stage adapted or recommends, what still needs the brand owner's sign-off, and what's deliberately deferred — plus the results of cross-checking [`design-system.md`](./design-system.md) and [`brand-to-ui.md`](./brand-to-ui.md) against every prior canonical document. Mirrors the pattern established in [`../ux/ux-decisions.md`](../ux/ux-decisions.md) and [`../architecture/technical-decisions.md`](../architecture/technical-decisions.md).
 
-Status: **Stage 0.95.** Last updated: 2026-09-06.
+Status: **Stage 0.95, + Phase 2 additions/consistency check appended.** Last updated: 2026-09-07.
 
 ---
 
@@ -36,10 +36,10 @@ Reasonable translations of official material into digital roles — documented w
 Not decided here — flagged specifically because this stage went beyond what the PDF shows, or found a gap/discrepancy the PDF doesn't resolve:
 
 - ~~**Currency discrepancy**~~ — **Resolved in Phase 1.** Confirmed by direct business input: EGP (Egyptian Pound) is the current, runtime website currency. The brand guide's Saudi Riyal mockup pricing is legacy context from an earlier period when the business operated in Saudi Arabia — not the target currency. `src/domain/money.ts` implements `Money` with EGP as the default `CurrencyCode`, integer piasters as the minor unit, per `docs/architecture/technical-architecture.md` §13.
-- **Semantic (success/error) color palette** — entirely absent from the brand guide; a digital-only addition proposed in `design-system.md` §2, kept deliberately separate from the brand palette until approved.
+- **Semantic (success/error) color palette** — entirely absent from the brand guide; a digital-only addition proposed in `design-system.md` §2, kept deliberately separate from the brand palette until approved. **Implemented this phase with concrete values** (`src/app/globals.css`'s `--color-feedback-*` tokens, in their own namespace, never merged into the brand palette): success `#4B7355`/bg `#E8EFE6`, warning `#B5651D`/bg `#F7EBDA`, danger `#9C4A3C`/bg `#F5E6E3` — muted, warm-leaning tones chosen to read as "part of this brand's world" rather than generic traffic-light red/green, but still not brand-sourced and still pending sign-off.
 - **Motion design system** (`design-system.md` §10) — not sourced from the brand guide at all (a static deck has no motion content); grounded in the brand's tone but not confirmed by the brand owner.
 - **Light-weight Almarai usage restriction** (small text avoided) — a legibility recommendation, not a rule stated in the guide; the guide's own type specimen doesn't show Light applied to small body text either way.
-- **General-purpose icon set** (cart, search, account, filter icons, etc.) — no brand icon language exists beyond the logo itself; needs either a brand-owner recommendation or an implementation-time choice within the restrained visual language already defined.
+- ~~**General-purpose icon set**~~ — **Resolved in Phase 2 as the anticipated implementation-time choice** (this item always allowed either path). Adopted `lucide-react`: a single-weight outline set (no filled/duotone/emoji styles mixed in) that reads as restrained rather than decorative, matching the brand's own minimal mark-making. Not brand-sourced, so still not an "official" system in the way the logo/colors/type are — a brand-owner icon language would take precedence if one is ever specified.
 - **Layout/grid system** (`design-system.md` §6) — entirely a digital construction, since a print/social deck has no web grid; consistent with the brand's tone but not literally sourced from it.
 - **Shadow color/style** (warm-tinted, §5) — a recommendation, not shown anywhere in the source.
 
@@ -88,3 +88,22 @@ Performed against `../architecture/blueprint.md`, `../architecture/architecture-
 ### Outcome
 
 No blocking conflicts. One new business-facing discrepancy was found (currency) and is added to the project's open-questions tracking via this document rather than resolved unilaterally; it should be read alongside the existing open-questions lists in `../requirements/website-functional-requirements.md` §25 and `../ux/ux-decisions.md` §B.
+
+---
+
+## Phase 2 consistency check
+
+Performed against this document and `design-system.md` themselves, now that both have been translated into actual code (`src/app/globals.css`, `src/ui/primitives/`, `src/ui/commerce/`).
+
+### Findings (Phase 2)
+
+1. **Token values match the documented mapping exactly.** Every semantic color/type/radius/shadow token in `globals.css` traces one-for-one to `design-system.md` §2/§3/§5 — no new brand color, no new typeface, no undocumented radius/shadow value was introduced during implementation.
+2. **Gold-as-text-on-light avoided, per §2's own contrast finding.** `design-system.md` §2 documents that gold fails contrast on light backgrounds (~2.3:1) and passes only on dark (~6:1). The implemented `--color-accent` token is used for icons/borders/on-dark text/large-display treatments in the primitives built so far, never as small body text on a light surface — no primitive violates the rule its own source document derived.
+3. **Card `surface` prop enforces §7's alternation rule at the type level.** `design-system.md` §7 requires primary/secondary surfaces to alternate rather than stack identically. The `Card` primitive's `surface: "primary" | "secondary"` prop makes the two options explicit and equally easy to reach for, rather than defaulting to one and leaving alternation to author discipline — a small implementation detail worth recording because it's a real (if minor) design decision, not just a translation of one.
+4. **Semantic feedback colors given concrete values (see §C above), not left abstract.** Recorded there rather than duplicated here.
+5. **Icon set resolved (see §C above), not left as an open item.** Recorded there rather than duplicated here.
+6. **No cartoon/decorative rendering anywhere in the primitives.** The non-negotiable visual-language rule (`design-system.md`, Phase 1 addition) mainly constrains future photography/Products-Experience content, which Phase 2 doesn't touch — but it also implicitly rules out illustrative/mascot-style iconography, which the plain outline `lucide-react` set (finding above, §C) satisfies by construction.
+
+### Outcome (Phase 2)
+
+No conflicts found between the implemented design system and its own source documents. Two previously-open items (§C) were resolved within the authority this stage already had; nothing was decided that required brand-owner sign-off beyond what was already flagged.

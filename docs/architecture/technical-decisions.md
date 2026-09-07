@@ -154,3 +154,37 @@ This development sandbox has no Docker and no locally installed PostgreSQL. Cons
 - **EGP vs. Saudi Riyal** — resolved this phase by direct business input, not by the engineering guess `docs/design/design-decisions.md` §C had flagged it as. See that document's updated §C entry and `src/domain/money.ts`.
 - **No new module-count or architecture-boundary violations** were introduced by any Phase 1 code — `src/modules/` was not touched at all (Phase 1 is deliberately pre-domain-model; only `src/lib/`, `src/domain/money.ts`, and `src/app/api/v1/health` exist), consistent with `feature-completeness-audit.md`'s framing that Phase 1 precedes the domain model, not the other way around.
 - See `../planning/feature-completeness-audit.md` for the full production-readiness gap audit performed as part of this phase (nine new findings, none blocking Phase 1 itself).
+
+---
+
+## Phase 2 — Brand + Design System + UX Implementation Foundation (2026-09-07)
+
+Implementation findings from turning the approved brand/UX/design docs into real tokens and UI primitives (`src/app/globals.css`, `src/ui/primitives/`, `src/ui/commerce/`).
+
+### Adopted (new dependencies, with rationale)
+
+- **`lucide-react`** — the icon set. Resolves the open item in `../design/design-decisions.md` §C via the implementation-time-choice path that item always allowed; see that document for the reasoning.
+- **`clsx` + `tailwind-merge`** (composed as `cn()` in `src/lib/cn.ts`) — the standard pattern for conditionally-composed Tailwind class strings that correctly resolves conflicting utilities (e.g. a caller overriding a default padding) instead of silently concatenating both. Small, single-purpose, no runtime beyond string handling.
+- No other runtime dependency was added. Testing/tooling deps already present from Phase 1 (Vitest, Playwright) were reused, not duplicated.
+
+### New finding: Tailwind v4's actual `@theme` namespace surface (verified, not assumed)
+
+Read directly from `node_modules/tailwindcss/theme.css` rather than relied on from training memory, since Tailwind v4's CSS-first config is a large enough change from v3 that guessing would be risky. Utility-generating namespaces actually used: `--color-*`, `--font-*`, `--text-*` (each paired with an optional `--text-{name}--line-height`), `--font-weight-*`, `--radius-*`, `--shadow-*`, `--breakpoint-*`, `--container-*`, `--spacing`, `--ease-*`. **Not** namespaced (no utility is generated from them): z-index and animation/transition duration. `globals.css` therefore defines `--z-dropdown/sticky/drawer/modal/toast/tooltip` and relies on Tailwind's built-in `duration-*` utilities instead of inventing a duration token namespace — consumed via arbitrary-value syntax (`z-[var(--z-modal)]`) where a plain utility doesn't exist. Recorded so a future engineer doesn't waste time defining a `--duration-*` or `--z-*` block under `@theme` expecting it to generate utilities — it won't.
+
+### New finding: native `<dialog>` for Modal and Drawer
+
+Both use the native `<dialog>` element (`showModal()`/`close()`) rather than a hand-rolled focus-trap/portal implementation — it provides correct focus trapping, Escape-to-close, top-layer stacking above the `--z-*` scale entirely, and a `::backdrop` pseudo-element for free, verified against real accessibility expectations rather than reimplemented. Drawer's slide-in entrance uses the `@starting-style` CSS at-rule (not yet in every browser) to animate from `display: none`; unsupported browsers simply skip the entrance animation and the dialog still opens correctly — a graceful degradation, not a broken one.
+
+### New finding: a real CSS-comment-parsing gotcha, worth guarding against in review
+
+A `globals.css` comment describing "Tailwind's default rounded-\*/shadow-\* scale" broke the entire stylesheet build, because the character sequence `-*/` contains CSS's own comment-close token (`*/`), silently truncating the comment early and leaving the rest of the file interpreted as raw (invalid) CSS. Root-caused via binary-search bisection rather than guesswork. Fixed by rewording the comment; recorded here because the same trap will recur for any future comment that mentions a wildcard-suffixed utility name (`rounded-*`, `text-*`, etc.) immediately followed by a slash — worth a second glance in review rather than a lint rule, since it's a narrow, easily-worded-around case.
+
+### New finding: Server/Client Component boundary convention
+
+No convention for this existed in writing before Phase 2 needed one. Established and followed throughout `src/ui/primitives/` and `src/ui/commerce/`: a component is a plain (Server) component by default, and only declares `"use client"` when it genuinely owns interactive state or an effect (`Accordion`, `Modal`, `Drawer`, `Toast`, `QuantityControl`, and the dev-showcase's interactive island). Components that merely accept event-handler props (`Button`, `IconButton`, `ProductCard`'s `onQuickAdd`) stay server components — they render fine as long as they're mounted from within an already-client-rendered subtree, and forcing `"use client"` on them would needlessly shrink the server-rendered portion of every future page. Worth stating explicitly since it's easy to over-apply `"use client"` defensively.
+
+### Consistency check addendum (Phase 2)
+
+- See `../design/design-decisions.md`'s Phase 2 section and `../ux/ux-decisions.md`'s Phase 2 section for the UX-consistency and design-consistency checks; see `../planning/feature-completeness-audit.md`'s Phase 2 section for the frontend-implication check against future commerce features.
+- **No new module-boundary violations.** `src/modules/` remains untouched — Phase 2 is presentation-layer (tokens + primitives) only, consistent with `module-boundaries.md`'s rule that Storefront/Content never own business data. `src/ui/commerce/mock-products.ts` is explicitly documented as sample data, isolated to the dev showcase, and never imported by a real route.
+- **No environment limitations beyond Phase 1's** (still no Docker/Postgres in this sandbox) — irrelevant to this phase's scope, since no database code was touched.
