@@ -1,17 +1,19 @@
-// Database foundation only — Phase 1 (Repository & Development Foundation).
+// Phase 4 — Commerce Engine. Implements the domain model in
+// docs/architecture/data-ownership.md and the engineering spec in
+// docs/architecture/technical-architecture.md §3-§13, reconciled and
+// extended where those docs were conceptual rather than concrete — see
+// docs/planning/commerce-completeness-audit.md for the full reasoning
+// behind every non-obvious modeling decision below (especially §1's
+// reconciliation of when an Order row actually gets created).
 //
-// Deliberately contains NO domain/business models yet. The full commerce
-// schema (catalog projection, cart, orders, customers, payments, shipments,
-// promotions, etc.) belongs to the Backend/Commerce phases per
-// docs/architecture/blueprint.md §19. Adding it here would repeat the
-// previous ERP project's mistake of committing to a schema before the
-// domain model has been implemented and reviewed against real usage.
-//
-// See docs/architecture/data-ownership.md for the conceptual domain model
-// this schema will eventually implement, and docs/architecture/technical-architecture.md
-// §13 for the database conventions (UUID identifiers, integer minor-unit
-// money, normalized phone numbers, soft deletion only where history must
-// survive) that any future model added here must follow.
+// Conventions (technical-architecture.md §13), applied throughout:
+// - UUID primary keys for every website-owned entity; ERP identifiers are
+//   separate reference columns, never reused as the website's own id.
+// - Money as integer minor units (piasters) — never Decimal/Float.
+// - Phone numbers stored normalized (E.164).
+// - created_at/updated_at (UTC) on every table.
+// - Soft-delete only where history must survive (Product.status,
+//   Order/OrderItem snapshots) — everything else is hard-deleted.
 
 generator client {
   provider = "prisma-client-js"
@@ -21,4 +23,583 @@ generator client {
 // CLI, and in src/lib/db.ts (via a driver adapter) for the application.
 datasource db {
   provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------
+// Catalog projection (commerce-completeness-audit.md §2)
+//
+// Conceptually ERP-owned (data-ownership.md) — but the ERP Adapter sync
+// job is out of scope this phase, so these are real tables populated by
+// prisma/seed.ts with clearly-labeled sample data, not a live projection
+// yet. Every field a real sync would eventually write already exists.
+// ---------------------------------------------------------------------
+
+enum ProductStatus {
+  ACTIVE
+  DISCONTINUED
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  slug      String   @unique
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id           String        @id @default(uuid())
+  /// Reference only, never the primary key — see the file header comment.
+  erpProductId String?       @unique
+  categoryId   String
+  slug         String        @unique
+  name         String
+  /// Short, safe, non-superlative description — see design-decisions.md's content-strategy rules.
+  description  String?
+  status       ProductStatus @default(ACTIVE)
+  sortOrder    Int           @default(0)
+  /// Deliberately loose — no confirmed per-category attribute shape exists yet.
+  /// Never read/validated by this phase's code. See the audit's §21 risk note
+  /// before building real logic on top of this column.
+  attributes   Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  category Category  @relation(fields: [categoryId], references: [id])
+  variants Variant[]
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Variant {
+  id                   String   @id @default(uuid())
+  productId            String
+  /// Global identity used everywhere else (cart items, order item snapshots) — never the product id.
+  sku                  String   @unique
+  /// Human-readable size/weight label (e.g. "500 جم") — deliberately not a
+  /// generalized option/value system. See commerce-completeness-audit.md §2.
+  label                String
+  priceAmountMinor     Int
+  compareAtAmountMinor Int?
+  currency             String   @default("EGP")
+  /// Raw projected quantity — never exposed directly to the storefront;
+  /// only the derived availability state (computed in the Catalog service)
+  /// ever crosses an API boundary. See commerce-completeness-audit.md §5.
+  inventoryQuantity    Int      @default(0)
+  active               Boolean  @default(true)
+  sortOrder            Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  product      Product                @relation(fields: [productId], references: [id])
+  cartItems    CartItem[]
+  orderItems   OrderItem[]
+  reservations InventoryReservation[]
+
+  @@index([productId])
+  @@map("variants")
+}
+
+// ---------------------------------------------------------------------
+// Inventory reservation — the direct fix for Phase 1's New Finding #1.
+// See commerce-completeness-audit.md §5.
+// ---------------------------------------------------------------------
+
+enum ReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+  EXPIRED
+}
+
+model InventoryReservation {
+  id                String            @id @default(uuid())
+  variantId         String
+  checkoutSessionId String
+  quantity          Int
+  status            ReservationStatus @default(ACTIVE)
+  /// 15-minute TTL from creation — see commerce-completeness-audit.md §5
+  /// for why 15 minutes and why it's still an open decision.
+  expiresAt         DateTime
+  createdAt         DateTime          @default(now())
+  releasedAt        DateTime?
+
+  variant         Variant         @relation(fields: [variantId], references: [id])
+  checkoutSession CheckoutSession @relation(fields: [checkoutSessionId], references: [id])
+
+  // Fast "sum active reservations for this variant" — the hot path on every availability check.
+  @@index([variantId, status])
+  @@index([status, expiresAt])
+  @@map("inventory_reservations")
+}
+
+// ---------------------------------------------------------------------
+// Customer / Session / Address / OTP (commerce-completeness-audit.md §7-8)
+// ---------------------------------------------------------------------
+
+model Customer {
+  id            String   @id @default(uuid())
+  phoneE164     String   @unique
+  name          String?
+  email         String?
+  /// Reference only — populated by a future reconcileCustomer() call
+  /// (ERP Integration phase), never by this phase's code.
+  erpCustomerId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  addresses Address[]
+  sessions  Session[]
+  carts     Cart[]
+  orders    Order[]
+
+  @@map("customers")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  /// A high-entropy opaque token (technical-architecture.md §7) — not a
+  /// password/OTP-shaped secret, so unlike OtpChallenge.codeHash this is
+  /// stored directly rather than hashed; its security comes from length/
+  /// randomness, and it is looked up (not verified-by-comparison) on every
+  /// request the same way any session-id lookup works.
+  token      String   @unique
+  /// Null = guest session (technical-architecture.md §7's guest-session rule).
+  customerId String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  carts    Cart[]
+
+  @@index([customerId])
+  @@map("sessions")
+}
+
+model Address {
+  id            String   @id @default(uuid())
+  customerId    String
+  label         String?
+  recipientName String
+  phoneE164     String
+  /// Plain validated strings, not FKs into a taxonomy table — no confirmed
+  /// Egyptian governorate/city/area structure exists yet. See
+  /// commerce-completeness-audit.md §8.
+  governorate   String
+  city          String
+  area          String?
+  street        String
+  building      String?
+  floor         String?
+  apartment     String?
+  landmark      String?
+  notes         String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@map("addresses")
+}
+
+model OtpChallenge {
+  id          String    @id @default(uuid())
+  phoneE164   String
+  /// Never the raw code — see commerce-completeness-audit.md §7.
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([phoneE164, createdAt])
+  @@map("otp_challenges")
+}
+
+// ---------------------------------------------------------------------
+// Cart (commerce-completeness-audit.md §6)
+// ---------------------------------------------------------------------
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+}
+
+model Cart {
+  id         String     @id @default(uuid())
+  sessionId  String
+  /// Set once the session authenticates — see technical-architecture.md §8.
+  customerId String?
+  status     CartStatus @default(ACTIVE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  session          Session           @relation(fields: [sessionId], references: [id])
+  customer         Customer?         @relation(fields: [customerId], references: [id])
+  items            CartItem[]
+  checkoutSessions CheckoutSession[]
+
+  @@index([sessionId])
+  @@index([customerId])
+  @@map("carts")
+}
+
+model CartItem {
+  id                    String   @id @default(uuid())
+  cartId                String
+  variantId             String
+  quantity              Int
+  /// UX "price changed since you added this" flag only — never authoritative.
+  /// Totals always re-read Variant.priceAmountMinor live. See §6 of the audit.
+  addedPriceAmountMinor Int
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  cart    Cart    @relation(fields: [cartId], references: [id])
+  variant Variant @relation(fields: [variantId], references: [id])
+
+  @@unique([cartId, variantId])
+  @@map("cart_items")
+}
+
+// ---------------------------------------------------------------------
+// Checkout session — the pre-order draft. See commerce-completeness-audit.md
+// §1 for why this exists as its own entity rather than an Order in a
+// "pending" state.
+// ---------------------------------------------------------------------
+
+enum CheckoutSessionStatus {
+  IN_PROGRESS
+  AWAITING_PAYMENT
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+model CheckoutSession {
+  id             String                @id @default(uuid())
+  cartId         String
+  customerId     String?
+  guestPhoneE164 String?
+  status         CheckoutSessionStatus @default(IN_PROGRESS)
+
+  // --- address snapshot (structured, not a live FK — technical-architecture.md §9's snapshot rule applies from the moment checkout starts) ---
+  recipientName String?
+  phoneE164     String?
+  governorate   String?
+  city          String?
+  area          String?
+  street        String?
+  building      String?
+  floor         String?
+  apartment     String?
+  landmark      String?
+  notes         String?
+
+  // --- shipping selection ---
+  shippingZoneId         String?
+  shippingMethodLabel    String?
+  shippingFeeAmountMinor Int?
+  shippingEstimateLabel  String?
+
+  // --- promotion ---
+  couponCode          String?
+  discountAmountMinor Int?
+
+  // --- authoritative totals, recomputed on every CheckoutService.recalculate() call ---
+  subtotalAmountMinor Int?
+  taxAmountMinor      Int?
+  totalAmountMinor    Int?
+  currency            String @default("EGP")
+
+  idempotencyKey String?  @unique
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  cart         Cart                   @relation(fields: [cartId], references: [id])
+  reservations InventoryReservation[]
+  order        Order?
+
+  @@index([cartId])
+  @@index([status, expiresAt])
+  @@map("checkout_sessions")
+}
+
+// ---------------------------------------------------------------------
+// Order (commerce-completeness-audit.md §14)
+// ---------------------------------------------------------------------
+
+enum OrderStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum ErpPushStatus {
+  NOT_PUSHED
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Order {
+  id                 String      @id @default(uuid())
+  /// Public, customer-facing reference — never the UUID. JAK-000123-shaped.
+  orderNumber        String      @unique
+  checkoutSessionId  String      @unique
+  customerId         String?
+  guestPhoneE164     String?
+  status             OrderStatus @default(CONFIRMED)
+  cancellationReason String?
+  cancelledAt        DateTime?
+
+  currency               String  @default("EGP")
+  subtotalAmountMinor    Int
+  discountAmountMinor    Int     @default(0)
+  shippingFeeAmountMinor Int     @default(0)
+  /// Real column, wired end-to-end, currently always 0 — this is NOT a tax
+  /// policy decision. See commerce-completeness-audit.md §4.
+  taxAmountMinor         Int     @default(0)
+  totalAmountMinor       Int
+  couponCode             String?
+
+  // --- address snapshot, copied from the CheckoutSession at confirmation ---
+  shippingRecipientName String
+  shippingPhoneE164     String
+  shippingGovernorate   String
+  shippingCity          String
+  shippingArea          String?
+  shippingStreet        String
+  shippingBuilding      String?
+  shippingFloor         String?
+  shippingApartment     String?
+  shippingLandmark      String?
+  shippingNotes         String?
+
+  // --- shipping snapshot ---
+  shippingMethodLabel   String
+  shippingEstimateLabel String?
+
+  // --- ERP boundary, preserved but not populated this phase (§16 of the audit) ---
+  erpOrderReference String?
+  erpPushStatus     ErpPushStatus @default(NOT_PUSHED)
+  pushedToErpAt     DateTime?
+
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  checkoutSession CheckoutSession @relation(fields: [checkoutSessionId], references: [id])
+  customer        Customer?       @relation(fields: [customerId], references: [id])
+  items           OrderItem[]
+  payments        Payment[]
+  shipment        Shipment?
+
+  @@index([customerId])
+  @@index([guestPhoneE164])
+  @@map("orders")
+}
+
+model OrderItem {
+  id      String @id @default(uuid())
+  orderId String
+
+  /// Traceability only — never read by pricing/display logic. A future
+  /// deleted/changed Variant must never alter what a past order says was
+  /// purchased. See commerce-completeness-audit.md §14.
+  variantId String?
+
+  skuSnapshot          String
+  productNameSnapshot  String
+  variantLabelSnapshot String
+  categoryNameSnapshot String?
+  unitPriceAmountMinor Int
+  quantity             Int
+  lineTotalAmountMinor Int
+
+  order   Order    @relation(fields: [orderId], references: [id])
+  variant Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ---------------------------------------------------------------------
+// Payment (commerce-completeness-audit.md §10)
+// ---------------------------------------------------------------------
+
+enum PaymentMethod {
+  COD
+  ONLINE
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  REFUND_INITIATED
+  REFUND_COMPLETED
+  /// COD's own first-class terminal-pending state — never a repurposed
+  /// "pending" (technical-architecture.md §5's explicit guidance).
+  AWAITING_COD_COLLECTION
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String
+  method      PaymentMethod
+  status      PaymentStatus @default(INITIATED)
+  amountMinor Int
+  currency    String        @default("EGP")
+
+  /// Set only for a real (future) provider adapter — null for COD.
+  providerName      String?
+  providerReference String?
+  failureReason     String?
+
+  idempotencyKey    String    @unique
+  initiatedAt       DateTime  @default(now())
+  authorizedAt      DateTime?
+  capturedAt        DateTime?
+  failedAt          DateTime?
+  cancelledAt       DateTime?
+  refundInitiatedAt DateTime?
+  refundCompletedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------
+// Shipping (commerce-completeness-audit.md §9)
+// ---------------------------------------------------------------------
+
+model ShippingZone {
+  id             String   @id @default(uuid())
+  governorate    String   @unique
+  feeAmountMinor Int
+  estimateLabel  String
+  codSupported   Boolean  @default(true)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("shipping_zones")
+}
+
+model Shipment {
+  id                String   @id @default(uuid())
+  orderId           String   @unique
+  zoneIdentifier    String
+  methodLabel       String
+  feeAmountMinor    Int
+  estimateLabel     String?
+  courierName       String?
+  trackingReference String?
+  trackingStatus    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("shipments")
+}
+
+// ---------------------------------------------------------------------
+// Promotions (commerce-completeness-audit.md §11)
+// ---------------------------------------------------------------------
+
+enum CouponType {
+  PERCENTAGE
+  FIXED
+}
+
+model Coupon {
+  id                  String     @id @default(uuid())
+  code                String     @unique
+  type                CouponType
+  /// PERCENTAGE: 1-100. FIXED: integer minor units. Validated at the service layer, not the DB.
+  value               Int
+  minOrderAmountMinor Int?
+  usageLimit          Int?
+  usageCount          Int        @default(0)
+  perCustomerLimit    Int?
+  startsAt            DateTime?
+  endsAt              DateTime?
+  active              Boolean    @default(true)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id             String   @id @default(uuid())
+  couponId       String
+  orderId        String?
+  customerId     String?
+  guestPhoneE164 String?
+  redeemedAt     DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+
+  @@index([couponId])
+  @@index([customerId])
+  @@map("coupon_redemptions")
+}
+
+// ---------------------------------------------------------------------
+// Infrastructure — idempotency & audit (technical-architecture.md §13)
+// ---------------------------------------------------------------------
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+model IdempotencyKey {
+  id               String            @id @default(uuid())
+  key              String            @unique
+  /// e.g. "checkout.createOrder", "payment.create" — namespaces keys so the
+  /// same key value in two unrelated scopes can never collide.
+  scope            String
+  status           IdempotencyStatus @default(IN_PROGRESS)
+  /// The stored result of the first successful call — returned as-is to any retry.
+  responseSnapshot Json?
+  createdAt        DateTime          @default(now())
+  completedAt      DateTime?
+
+  @@index([scope])
+  @@map("idempotency_keys")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entityType String
+  entityId   String
+  action     String
+  actorType  String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
 }

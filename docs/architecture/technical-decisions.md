@@ -2,7 +2,7 @@
 
 Records what this stage confirmed, recommended, left open, or deferred, plus the results of cross-checking [`technical-architecture.md`](./technical-architecture.md), [`module-boundaries.md`](./module-boundaries.md), and [`data-ownership.md`](./data-ownership.md) against every prior canonical document. Mirrors the pattern established in [`../ux/ux-decisions.md`](../ux/ux-decisions.md).
 
-Status: **Stage 0.9, extended in Phase 1, Phase 2, and Phase 3.** Last updated: 2026-09-07.
+Status: **Stage 0.9, extended in Phase 1, Phase 2, Phase 3, and Phase 4.** Last updated: 2026-09-07.
 
 ---
 
@@ -231,3 +231,51 @@ React/Next.js only allows plain objects (and a short allow-list of built-ins) as
 - See `../planning/feature-completeness-audit.md`'s Phase 3 pre-implementation audit and `../ux/ux-decisions.md`'s Phase 3 section.
 - **No new module-boundary violations.** `src/modules/` remains untouched. The one new server-side write path (`api/v1/contact`) doesn't import Prisma/ERP/payment/shipping — logging only.
 - **No environment limitations beyond Phase 1's.**
+
+---
+
+## Phase 4 — Commerce Engine (2026-09-07)
+
+`src/modules/*` is populated for the first time — Catalog, Cart, Customers, Checkout, Orders, Payments, Shipping, Promotions, Notifications, each with a `repository.ts` (Prisma access only) / `service.ts` (business logic) split. Full reasoning for every domain-modeling decision lives in `../planning/commerce-completeness-audit.md`, which was written *before* the schema, per this phase's own instruction; this section covers implementation-level findings that document doesn't.
+
+### Adopted (no new dependencies)
+
+Nothing new was added to `package.json`. Everything this phase needed (transactions/row-locking, hashing, structured errors) already existed in Prisma, Node's `crypto` module, or Phase 1's foundations.
+
+### Finding: Node 24 runs TypeScript seed scripts natively — no `tsx`/`ts-node` dependency needed
+
+Verified empirically before deciding: `node prisma/seed.ts` works directly on this project's pinned Node version (24), including relative imports, as long as they carry an explicit `.ts` extension (Node's native type-stripping does not do path resolution the way a bundler does — `../src/domain/money` fails, `../src/domain/money.ts` works). This is *why* `prisma/seed.ts` constructs its own minimal `PrismaClient` instead of importing `src/lib/db.ts`: that file imports via the `@/` path alias, which only Next.js's own bundler resolves, and Node's native runner doesn't consult `tsconfig.json`'s `paths`. Wired into `prisma.config.ts`'s `migrations.seed` option. Worth remembering before reaching for `tsx` as a devDependency for any future standalone script — Node's native support already covers this project's actual need.
+
+### Finding: `Variant` prop shapes for services stay Prisma-typed by design — the Phase 3 RSC-boundary lesson doesn't apply here
+
+Phase 3 found that a class instance (`Money`) can't cross a Server-to-Client React prop boundary. Phase 4's services return `Money` instances freely (e.g. `CatalogService.getProduct()` → `ProductView` with real `Money` fields) because every consumer this phase built is an **API route handler**, which serializes the whole response to JSON via `NextResponse.json()` — a completely different boundary than a React Server/Client Component split, and one `Money`'s plain `{amountMinor, currency}` own-property shape already serializes correctly through. No special handling was needed; recorded so a future phase wiring these services into React Server Components directly (rather than through an API route) re-reads Phase 3's finding before assuming the same is true here.
+
+### Order / Payment / Fulfillment state model (as actually implemented)
+
+Three genuinely independent dimensions, per this phase's explicit instruction not to collapse them into one status field:
+
+- **Order lifecycle** (`OrderStatus`): `CONFIRMED → CANCELLED` only. An Order row is *never* created in a pending state — see `data-ownership.md`'s Phase 4 reconciliation note. "Refunded" is deliberately **not** a third `OrderStatus` value; it's derived at read time from the linked `Payment`'s state (`src/modules/orders/service.ts`'s `deriveCustomerFacingStatus`), so the two can never disagree.
+- **Payment lifecycle** (`PaymentStatus`): `INITIATED → PENDING → AUTHORIZED? → CAPTURED`, `FAILED`/`CANCELLED` pre-capture, `REFUND_INITIATED → REFUND_COMPLETED`, plus COD's own first-class `AWAITING_COD_COLLECTION` — never a repurposed "pending" for COD (`technical-architecture.md` §5's explicit guidance, followed literally).
+- **Fulfillment lifecycle**: intentionally unpopulated this phase (`Order.erpPushStatus` tracks only the website's own push *attempt*, never real ERP fulfillment stages) — building a stage vocabulary now would mean guessing what the real ERP eventually reports.
+
+### Inventory reservation — implementation notes beyond the audit's design
+
+- Row-level locking uses `tx.$queryRaw\`SELECT id FROM variants WHERE id = ${id}::uuid FOR UPDATE\`` inside `prisma.$transaction`, not an ORM-level "optimistic concurrency" field — chosen because the failure mode being prevented (two concurrent checkouts both reading the same pre-reservation count) is exactly what pessimistic row locking is for, and Prisma has no first-class API for it, only the raw-query escape hatch.
+- Reservation creation is **all-or-nothing per checkout**: `reserveInventoryForItems` throws `InsufficientInventoryError` if *any* line item lacks stock, which — because it's called inside the caller's own `$transaction` — rolls back every reservation already inserted earlier in that same call. Verified by `tests/integration/inventory-concurrency.test.ts`'s "all-or-nothing" case, not just asserted in a comment.
+- Verified under real concurrency, not just single-threaded reasoning: `tests/integration/inventory-concurrency.test.ts` fires 10 parallel reservation attempts at a variant with 3 units available via `Promise.allSettled`, and asserts exactly 3 succeed and 7 reject with `InsufficientInventoryError` — this is the specific test this phase's brief asked for.
+
+### Testing strategy without a local database (environment limitation, same disclosure pattern as Phase 1)
+
+This sandbox still has no Docker/local Postgres. Rather than either skip DB-touching logic entirely or write tests that would hard-fail locally:
+
+- **Unit tests** (`tests/unit/`) cover every pure function directly — phone normalization, availability derivation, coupon discount math (percentage rounding, fixed-capped-at-subtotal), and the idempotency-key claim/replay/conflict logic (tested against a minimal in-memory fake satisfying just the two Prisma methods it calls, not a real database).
+- **Integration tests** (`tests/integration/`) exercise the real repository/service/Prisma layer — cart, checkout (including the concurrency test above), and order authorization/tracking — and check database reachability at the top of each file (`isDatabaseAvailable()`), using `describe.skipIf` to skip cleanly rather than fail when it's unreachable. `vitest.config.ts` gained a `setupFiles` entry loading `.env` (Vitest, unlike Next.js, doesn't do this automatically — needed because even a "pure" unit test can transitively import `src/lib/db.ts`, which validates `DATABASE_URL` at module-load time).
+- Result in this sandbox: 70 unit tests pass for real; 21 integration tests skip cleanly and will run for real in CI (a real Postgres service container, per `.github/workflows/ci.yml`). Manually verified the new API routes fail gracefully (a logged, referenced `internal` error — never a crash or a raw stack trace) against the unreachable database, the same standard Phase 1's health check set.
+- **No new Playwright E2E tests were added this phase.** Every new commerce API route needs a real database to do anything meaningful, so an E2E test would hit the exact same local-verification gap the integration tests already disclose, while testing less precisely than those integration tests already do. The existing Phase 3 E2E suite (storefront, unaffected by this phase) was re-run and still passes 32/32 — proving no regression, not new commerce coverage. E2E coverage for the commerce flows becomes meaningful once a future phase wires the storefront's UI to these APIs.
+
+### Consistency check addendum (Phase 4)
+
+- See `../planning/commerce-completeness-audit.md` for the full pre-implementation audit, open decisions, and architecture risks discovered.
+- **No ERP integration, no real payment provider, no real courier integration was implemented** — confirmed absent from the diff. `CodPaymentAdapter` and `ManualShippingAdapter` are real, complete MVP implementations of their respective interfaces, not stubs standing in for something unbuilt.
+- **`src/modules/infrastructure/` remains unused, by design.** That module's stated public interface (`getConfig`, `logger`, `healthCheck`) has lived in `src/lib/` since Phase 1 (`env.ts`, `logger.ts`, `db.ts`) — this phase's new cross-cutting pieces (`idempotency.ts`, `audit-log.ts`, `session.ts`) followed the same precedent rather than introducing a parallel `src/modules/infrastructure/` that would just re-export the same things.
+- **No environment limitations beyond Phase 1's**, beyond what's already disclosed above for testing specifically.

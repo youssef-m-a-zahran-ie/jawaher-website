@@ -19,6 +19,7 @@ export const logger = pino({
     paths: [
       "*.otp",
       "*.otpCode",
+      "*.codeHash",
       "*.password",
       "*.token",
       "*.accessToken",
@@ -29,6 +30,16 @@ export const logger = pino({
       "req.headers.authorization",
       "*.cardNumber",
       "*.cvv",
+      // Commerce (Phase 4) — never log a full phone number or delivery
+      // address (technical-architecture.md §21/§27). Call sites that need
+      // to identify a customer in logs use maskPhone() (src/domain/phone.ts)
+      // and log city/area only, never street/building.
+      "*.phoneE164",
+      "*.recipientPhone",
+      "*.street",
+      "*.building",
+      "*.apartment",
+      "*.landmark",
     ],
     censor: "[REDACTED]",
   },

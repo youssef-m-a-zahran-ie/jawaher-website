@@ -12,4 +12,10 @@ export default defineConfig({
   datasource: {
     url: env("DATABASE_URL"),
   },
+  migrations: {
+    // prisma/seed.ts runs directly under Node's native TypeScript support
+    // (Node 24+) — no ts-node/tsx dependency needed. See that file's header
+    // comment for why it doesn't reuse src/lib/db.ts.
+    seed: "node prisma/seed.ts",
+  },
 });

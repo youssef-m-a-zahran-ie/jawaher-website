@@ -2,7 +2,7 @@
 
 Conceptual domain model (entities, invariants, state transitions) and the detailed data-ownership matrix. Elaborates [`blueprint.md`](./blueprint.md) §7 with the operational columns this stage requires (sync direction, conflict authority, update trigger, failure behavior). No Prisma models or code — conceptual only.
 
-Status: **Draft for review — Stage 0.9.** Last updated: 2026-09-06.
+Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Order state transitions).** Last updated: 2026-09-07.
 
 ---
 
@@ -52,7 +52,7 @@ Status: **Draft for review — Stage 0.9.** Last updated: 2026-09-06.
 ### Order / OrderItem
 - **Entity:** the Website Order (blueprint §8) — order items are **snapshots** of SKU, quantity, and price at creation time (the one place price is intentionally frozen, technical-architecture.md §9).
 - **Invariants:** once created, historical totals never change even if the catalog price later changes; an order always has exactly one address snapshot, one shipping snapshot, and links to at most one active payment record (additional payment attempts after a failure are still one-per-order in sequence, not parallel).
-- **State transitions:** `created → payment_pending → paid → pushed_to_erp → (cancelled | refunded)`, with the ERP Order Reference separately carrying `preparing → out_for_delivery → delivered` (mapped one-way into the same customer-facing record).
+- **State transitions:** `created → payment_pending → paid → pushed_to_erp → (cancelled | refunded)` describes the conceptual commercial lifecycle, not literally when an Order *row* is materialized. `technical-architecture.md` §9 is the binding, more specific rule: no Order row exists until the customer has actually committed (payment captured for online payment, or immediately for COD) — the `payment_pending` step above corresponds to a separate `CheckoutSession` entity holding the in-progress draft (and, from Phase 4, the temporary inventory reservation that closes Phase 1's New Finding #1), not to an Order row in a pending state. Reconciled during Phase 4 — see `docs/planning/commerce-completeness-audit.md` §1. The ERP Order Reference separately carries `preparing → out_for_delivery → delivered` (mapped one-way into the same customer-facing record).
 - **Ownership:** website-owned for the commercial envelope; ERP-owned for the operational/fulfillment envelope (ERP Order Reference) — see blueprint §8, restated in full below.
 
 ### Payment

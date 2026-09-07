@@ -25,6 +25,13 @@ const envSchema = z.object({
   // back to a localhost dev URL rather than a guessed/invented domain.
   NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
 
+  // Shared secret for internal/scheduler-only endpoints (e.g. the
+  // inventory-reservation sweep — src/app/api/v1/internal/*). Optional in
+  // development (that endpoint allows unauthenticated calls locally so
+  // it's testable without provisioning a secret); required in production
+  // — see that route's own check.
+  INTERNAL_API_SECRET: z.string().min(16).optional(),
+
   // --- Reserved for later phases (optional until implemented) ---
   SESSION_SECRET: z.string().min(1).optional(),
   OTP_PROVIDER_API_KEY: z.string().min(1).optional(),

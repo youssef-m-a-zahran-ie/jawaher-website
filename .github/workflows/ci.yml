@@ -39,17 +39,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Must run before typecheck/test: src/modules/* (Phase 4) imports
+      # @prisma/client's generated types, and this project has no
+      # postinstall hook that generates them automatically.
+      - name: Prisma generate
+        run: npx prisma generate
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests
-        run: npm test
+      # No committed migration exists yet (schema.prisma was authored and
+      # validated without a reachable local Postgres to generate one
+      # against — see docs/architecture/technical-decisions.md's Phase 4
+      # section). `db push` applies the schema directly to this job's fresh
+      # container, which is exactly what a from-scratch CI database needs.
+      - name: Push database schema
+        run: npx prisma db push
 
-      - name: Prisma generate
-        run: npx prisma generate
+      - name: Seed database (verifies prisma/seed.ts against a real Postgres)
+        run: npm run db:seed
+
+      - name: Unit + integration tests
+        run: npm test
 
       - name: Build
         run: npm run build
