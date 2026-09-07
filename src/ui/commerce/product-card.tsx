@@ -1,17 +1,13 @@
-import { ShoppingCart } from "lucide-react";
-
 import { cn } from "@/lib/cn";
 import { Badge } from "@/ui/primitives/badge";
 import { ImagePlaceholder } from "@/ui/primitives/image-placeholder";
 import { Link } from "@/ui/primitives/link";
-import { IconButton } from "@/ui/primitives/icon-button";
 import { PriceDisplay } from "@/ui/commerce/price-display";
+import { QuickAddButton } from "@/ui/commerce/quick-add-button";
 import type { ProductCardData } from "@/ui/commerce/types";
 
 export type ProductCardProps = {
   product: ProductCardData;
-  /** Omit to hide quick-add even for an eligible product (e.g. inside Products Experience's curated showcase). */
-  onQuickAdd?: (product: ProductCardData) => void;
   className?: string;
 };
 
@@ -27,16 +23,22 @@ const AVAILABILITY_BADGE: Record<string, { label: string; variant: "warning" | "
  * is a separate, higher-stacked control so a <button> never nests inside
  * an <a>. Quick-add only renders for single-SKU, in-stock products
  * (requirements COM-004) — never a variant-picker shortcut on the card.
+ *
+ * ProductCard itself stays a plain (server-renderable) component — only
+ * QuickAddButton, which it renders internally, is a client island. This
+ * lets every page that shows a grid of these (Home, Shop, Category,
+ * Search, PDP related) stay 100% server-rendered, with Money never
+ * needing to cross a Server→Client boundary (see QuickAddButton's comment).
  */
-export function ProductCard({ product, onQuickAdd, className }: ProductCardProps) {
+export function ProductCard({ product, className }: ProductCardProps) {
   const isOutOfStock = product.availability === "out_of_stock";
-  const canQuickAdd = !product.hasMultipleVariants && !isOutOfStock && onQuickAdd;
+  const canQuickAdd = !product.hasMultipleVariants && !isOutOfStock;
   const availabilityBadge = AVAILABILITY_BADGE[product.availability];
 
   return (
     <div className={cn("group relative flex flex-col gap-3", isOutOfStock && "opacity-60", className)}>
       <Link
-        href={`/products/${product.slug}`}
+        href={`/product/${product.slug}`}
         className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <span className="sr-only">{product.name}</span>
@@ -59,13 +61,7 @@ export function ProductCard({ product, onQuickAdd, className }: ProductCardProps
           <PriceDisplay price={product.price} compareAtPrice={product.compareAtPrice} size="sm" />
           {canQuickAdd && (
             <div className="pointer-events-auto relative z-20">
-              <IconButton
-                icon={<ShoppingCart className="size-4" />}
-                aria-label={`أضف ${product.name} إلى السلة`}
-                variant="solid"
-                size="sm"
-                onClick={() => onQuickAdd(product)}
-              />
+              <QuickAddButton productId={product.id} productName={product.name} category={product.category} />
             </div>
           )}
         </div>

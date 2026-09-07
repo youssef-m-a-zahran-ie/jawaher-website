@@ -17,7 +17,16 @@ export default defineConfig({
     // left as whatever's in the environment (or unset) so this also proves
     // the health check degrades gracefully instead of crashing when the
     // database is unreachable — see tests/e2e/health.spec.ts.
-    command: "npm run build && npm run start",
+    //
+    // Deliberately NOT `npm run start`: with next.config.ts's
+    // `output: "standalone"`, `next start` prints "does not work with
+    // output: standalone configuration" and doesn't serve the app
+    // correctly. The real production entry point is
+    // .next/standalone/server.js (see the Dockerfile, which uses the same
+    // file) — scripts/prepare-standalone.mjs copies in the static assets
+    // that standalone output deliberately excludes.
+    command: "npm run build && node scripts/prepare-standalone.mjs && node .next/standalone/server.js",
+    env: { NODE_ENV: "production" },
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

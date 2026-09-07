@@ -85,14 +85,10 @@ export function ShowcaseInteractive() {
       </section>
 
       <section>
-        <h2 className="mb-4 text-h3">Product card — with quick-add wired to the toast</h2>
+        <h2 className="mb-4 text-h3">Product card — quick-add is self-contained (wired to the toast internally)</h2>
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
           {MOCK_PRODUCTS.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onQuickAdd={(p) => show({ title: `أُضيف "${p.name}" إلى السلة`, variant: "success" })}
-            />
+            <ProductCard key={product.id} product={product} />
           ))}
         </div>
       </section>

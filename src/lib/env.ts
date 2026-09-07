@@ -19,6 +19,12 @@ const envSchema = z.object({
   // Database (consumed by src/lib/db.ts)
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required — see .env.example"),
 
+  // Public site origin (consumed by src/lib/site-url.ts — sitemap/robots/canonical
+  // URLs/metadataBase). Optional: the real production domain is not yet decided
+  // (no deployment/domain decision exists in docs/ as of Phase 3), so this falls
+  // back to a localhost dev URL rather than a guessed/invented domain.
+  NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
+
   // --- Reserved for later phases (optional until implemented) ---
   SESSION_SECRET: z.string().min(1).optional(),
   OTP_PROVIDER_API_KEY: z.string().min(1).optional(),

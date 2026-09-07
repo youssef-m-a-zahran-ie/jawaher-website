@@ -2,7 +2,7 @@
 
 Records what must be preserved unchanged from the brand guide, what this stage adapted or recommends, what still needs the brand owner's sign-off, and what's deliberately deferred — plus the results of cross-checking [`design-system.md`](./design-system.md) and [`brand-to-ui.md`](./brand-to-ui.md) against every prior canonical document. Mirrors the pattern established in [`../ux/ux-decisions.md`](../ux/ux-decisions.md) and [`../architecture/technical-decisions.md`](../architecture/technical-decisions.md).
 
-Status: **Stage 0.95, + Phase 2 additions/consistency check appended.** Last updated: 2026-09-07.
+Status: **Stage 0.95, + Phase 2 and Phase 3 additions/consistency checks appended.** Last updated: 2026-09-07.
 
 ---
 
@@ -107,3 +107,14 @@ Performed against this document and `design-system.md` themselves, now that both
 ### Outcome (Phase 2)
 
 No conflicts found between the implemented design system and its own source documents. Two previously-open items (§C) were resolved within the authority this stage already had; nothing was decided that required brand-owner sign-off beyond what was already flagged.
+
+---
+
+## Phase 3 additions
+
+Phase 3 built real pages on top of this design system rather than extending the system itself, so most of it is presentation-layer engineering, not a design decision — but two choices are genuinely visual and belong on this ledger:
+
+- **Hero media strategy: typographic/color-field composition, not an image slot.** With no hero photography supplied (`asset-manifest.md`, unchanged), the hero uses a brand-gradient background (`--color-surface-dark` → `--color-brand-brown-mid`) carrying headline/tagline/CTA, rather than an empty or placeholder-icon image area. A deliberate design choice for this specific, highest-visibility section — not the same treatment as smaller placeholders elsewhere. See `src/ui/home/hero.tsx`'s comment.
+- **A second `ImagePlaceholder` variant (`"feature"`) for large-format contexts** (PDP gallery, hero-scale) — a brand-toned gradient panel with a visible caption, distinct from the existing small dashed-border `"card"` variant (product grids), where a large dashed box would read as a broken page rather than a deliberate placeholder. Extends the existing primitive rather than duplicating it (`src/ui/primitives/image-placeholder.tsx`).
+
+Full engineering detail (routes, the RSC-boundary/`notFound()`/standalone-server findings) lives in `../architecture/technical-decisions.md`'s Phase 3 section and `../planning/feature-completeness-audit.md`'s Phase 3 section, not duplicated here.

@@ -5,5 +5,5 @@ test("renders the RTL Arabic shell", async ({ page }) => {
 
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await expect(page.locator("html")).toHaveAttribute("lang", "ar");
-  await expect(page.getByRole("heading", { name: "جواهر الخير" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "جواهر الخير", exact: true })).toBeVisible();
 });

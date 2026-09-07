@@ -2,7 +2,7 @@
 
 Records what this stage confirmed, recommended, left open, or deferred, plus the results of cross-checking [`technical-architecture.md`](./technical-architecture.md), [`module-boundaries.md`](./module-boundaries.md), and [`data-ownership.md`](./data-ownership.md) against every prior canonical document. Mirrors the pattern established in [`../ux/ux-decisions.md`](../ux/ux-decisions.md).
 
-Status: **Stage 0.9, extended in Phase 1.** Last updated: 2026-09-07.
+Status: **Stage 0.9, extended in Phase 1, Phase 2, and Phase 3.** Last updated: 2026-09-07.
 
 ---
 
@@ -188,3 +188,46 @@ No convention for this existed in writing before Phase 2 needed one. Established
 - See `../design/design-decisions.md`'s Phase 2 section and `../ux/ux-decisions.md`'s Phase 2 section for the UX-consistency and design-consistency checks; see `../planning/feature-completeness-audit.md`'s Phase 2 section for the frontend-implication check against future commerce features.
 - **No new module-boundary violations.** `src/modules/` remains untouched — Phase 2 is presentation-layer (tokens + primitives) only, consistent with `module-boundaries.md`'s rule that Storefront/Content never own business data. `src/ui/commerce/mock-products.ts` is explicitly documented as sample data, isolated to the dev showcase, and never imported by a real route.
 - **No environment limitations beyond Phase 1's** (still no Docker/Postgres in this sandbox) — irrelevant to this phase's scope, since no database code was touched.
+
+---
+
+## Phase 3 — Customer-Facing Website Core (2026-09-07)
+
+Three genuine framework-behavior discoveries this phase, each verified empirically (this project's established discipline) rather than assumed — recorded here so a later phase doesn't rediscover them the hard way. Full context for each also lives in `../planning/feature-completeness-audit.md`'s Phase 3 "New findings" section.
+
+### Finding: class instances (e.g. `Money`) cannot cross a Server→Client prop boundary
+
+React/Next.js only allows plain objects (and a short allow-list of built-ins) as props flowing from a Server Component into a `"use client"` component — a class instance with a private constructor, like `Money`, fails this and fails the *build*, not just a lint rule (`next build` errors: "Only plain objects... Classes... are not supported"). This is a real constraint on the whole `ProductCardData`-shaped commerce layer, not a one-off bug:
+
+- **Rule going forward:** a client component that needs data derived from a `ProductCardData` (or anything else carrying a domain value object) must receive only plain primitives as props (id/name/category strings, etc.) — never the object itself. `src/ui/commerce/quick-add-button.tsx` and `(storefront)/product/[slug]/product-actions.tsx` are the reference implementations.
+- **Why Phase 2 never hit this:** the dev showcase (`src/app/dev/design-system/showcase-interactive.tsx`) is itself one big `"use client"` file that *imports* `MOCK_PRODUCTS` directly — a client-side module import, not a prop crossing a Server→Client boundary. The bug was latent until Phase 3's real Server Component pages rendered the same components for the first time.
+- **Consequence for `ProductCard`/`ProductGrid`:** both are now plain server-renderable components again — `ProductCard` self-contains its quick-add interactivity via the small `QuickAddButton` island instead of taking an `onQuickAdd` callback prop. This is a strictly better shape (smaller client surface, one fewer prop for every call site), not just a workaround.
+
+### Finding: `notFound()` is a "soft 404" (200 + `noindex`) under a `loading.tsx` ancestor — documented Next.js 16 behavior
+
+`notFound()`'s own bundled docs (`node_modules/next/dist/docs/.../functions/not-found.md`) state the mechanism directly: a `loading.tsx` creates an implicit Suspense boundary; its fallback streams as an immediate `200`; the HTTP status can no longer change once a call inside that boundary later throws `notFound()`. Next.js's own mitigation is injecting `<meta name="robots" content="noindex">` so the page is still excluded from indexing despite the 200. Discovered because `/shop/[category]`, `/product/[slug]`, `/policies/[slug]`, and the dev-showcase guard all returned 200 for invalid params — reproduced identically in `next dev`, ruling out a production-only or caching-layer cause before looking at the docs.
+
+- **Root cause in this codebase:** `src/app/loading.tsx` (root) and `(storefront)/shop/loading.tsx` — both added this phase to satisfy the "loading states" requirement — are the Suspense-boundary ancestors responsible.
+- **Resolution:** kept the `loading.tsx` files (a real, requested feature) and the `notFound()` calls (still the semantically correct API — it does render the right UI and does set `noindex`). Tests (`tests/e2e/not-found.spec.ts`, `tests/e2e/design-system-showcase.spec.ts`) were written against the actual guarantee — correct branded UI renders, `noindex` present, real page content never ships — rather than a literal status-code assertion that would fight documented framework behavior.
+- **If a hard 404 status is ever a real requirement** (e.g. a strict external SEO audit), the docs' own recommended fix is to do the existence check in `proxy.ts` before any streaming starts, trading a small amount of duplicated slug-validation logic for a literal status code. Not implemented now — the noindex mitigation already satisfies every actual SEO/UX concern.
+
+### Finding: `next start` does not serve an `output: "standalone"` build correctly — a pre-existing Phase 1 gap, not a Phase 3 regression
+
+`next start` prints "does not work with `output: standalone` configuration. Use `node .next/standalone/server.js` instead" and doesn't serve the app as built. `next.config.ts`'s `output: "standalone"` was set in Phase 1 for the Dockerfile; `playwright.config.ts`'s `webServer` has used `npm run build && npm run start` since Phase 1 — meaning every E2E run's server was subtly wrong the whole time, just not in a way Phase 1/2's specific assertions happened to expose.
+
+- **Fix:** `scripts/prepare-standalone.mjs` (Node `fs.cpSync`, not shell `cp`, so it runs identically on Windows/Linux/CI) copies `.next/static` and `public/` into `.next/standalone/`, matching exactly what the Dockerfile already did correctly. `playwright.config.ts` now runs `npm run build && node scripts/prepare-standalone.mjs && node .next/standalone/server.js`. The root README's documented Windows/Git-Bash manual-workaround steps were updated to match.
+- No `next.config.ts` change was made — `output: "standalone"` itself is correct and still the right choice for the Dockerfile; the bug was in how it was being *tested*, not in the config.
+
+### Other Phase 3 decisions
+
+- **Route structure follows `technical-architecture.md` §2 exactly**: `src/app/(storefront)/` (Home, Shop, Category, PDP, Search, About, Contact, Policies), `src/app/(account)/account/` — the first code to actually populate these previously-empty route groups.
+- **Category URL slugs** (`dates`/`honey`/`oils`/`nuts`/`ghee`) implement the "transliterated Latin slug" option `website-functional-requirements.md` §25/SEO-003 already recommended but left unconfirmed — a working default, not a final business decision (see `../ux/ux-decisions.md`'s Phase 3 section and `src/ui/commerce/categories.ts`'s own comment). Swapping slug style later touches one file and route folder names, not any component contract.
+- **`track(event, params)` implemented** exactly per `blueprint.md` §14's signature (`src/lib/analytics.ts`) — console-only in dev, no GA4/GTM destination wired yet, per this phase's explicit instruction not to integrate one. Every future analytics-provider integration has exactly one call site to change.
+- **Contact form backed by a real API route** (`src/app/api/v1/contact/route.ts`) that validates (zod), rate-limits (`src/lib/rate-limit.ts`), and logs (`src/lib/logger.ts`) — not yet connected to a human notification channel (email/SMS is the Notifications module's job, a later phase). Chosen over a fake-success or non-functional form specifically to avoid either lying to a real visitor or shipping a dead page.
+- **`ProductCard`'s PDP link fixed** from `/products/[slug]` (plural, a latent Phase 2 typo never exercised until a real `/product` route existed) to `/product/[slug]` (singular, this phase's canonical route).
+
+### Consistency check addendum (Phase 3)
+
+- See `../planning/feature-completeness-audit.md`'s Phase 3 pre-implementation audit and `../ux/ux-decisions.md`'s Phase 3 section.
+- **No new module-boundary violations.** `src/modules/` remains untouched. The one new server-side write path (`api/v1/contact`) doesn't import Prisma/ERP/payment/shipping — logging only.
+- **No environment limitations beyond Phase 1's.**

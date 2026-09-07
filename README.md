@@ -2,7 +2,7 @@
 
 Arabic-first, RTL, mobile-first e-commerce platform for Jawaher Al Khair (جواهر الخير), a premium Egyptian food brand (dates, honey, oils, nuts, ghee). This README is developer-onboarding documentation — for project context (architecture, requirements, UX, design, decisions), see [`docs/README.md`](./docs/README.md), which is canonical.
 
-**Current phase:** Phase 2 — Brand + Design System + UX Implementation Foundation. There is no storefront yet by design — this phase built the token system and reusable UI primitives, not real pages. See [`docs/planning/feature-completeness-audit.md`](./docs/planning/feature-completeness-audit.md) and [`docs/architecture/blueprint.md`](./docs/architecture/blueprint.md) §19 for what comes next.
+**Current phase:** Phase 3 — Customer-Facing Website Core. The public site shell, homepage, category/product/search/about/contact/policy pages exist for real now — cart, checkout, payment, ERP integration, and the cinematic Products Experience do not yet. See [`docs/planning/feature-completeness-audit.md`](./docs/planning/feature-completeness-audit.md) and [`docs/architecture/blueprint.md`](./docs/architecture/blueprint.md) §19 for what comes next.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ npm run db:generate           # generates the Prisma Client
 npm run dev
 ```
 
-Open <http://localhost:3000>. The one existing API route, `GET /api/v1/health`, reports `{ status: "ok" | "degraded", checks: { database: "ok" | "error" } }` — it degrades gracefully rather than crashing if the database isn't reachable, so `npm run dev` works even before you have Docker/Postgres running.
+Open <http://localhost:3000>. `GET /api/v1/health` reports `{ status: "ok" | "degraded", checks: { database: "ok" | "error" } }` — it degrades gracefully rather than crashing if the database isn't reachable, so `npm run dev` works even before you have Docker/Postgres running. See "API routes" below for the rest.
 
 **No Docker?** The app still runs — the health check will just report `database: "error"` until you point `DATABASE_URL` (in `.env`) at a real reachable PostgreSQL instance and re-run `npm run db:generate`.
 
@@ -43,15 +43,24 @@ Open <http://localhost:3000>. The one existing API route, `GET /api/v1/health`, 
 
 ```text
 src/
-├── app/          # Next.js App Router — routes only, thin (calls into modules/)
+├── app/
+│   ├── (storefront)/  # Home, Shop, Category, Product, Search, About, Contact, Policies
+│   ├── (account)/     # /account (placeholder — no real auth yet)
+│   ├── api/v1/         # health, contact — route handlers only, thin
+│   ├── dev/            # design-system showcase — excluded from production
+│   ├── error.tsx, not-found.tsx, loading.tsx, sitemap.ts, robots.ts
+│   └── layout.tsx      # root shell: Header/Footer/ToastProvider/skip-link
 ├── modules/      # domain modules (still empty — see docs/architecture/module-boundaries.md)
 ├── domain/       # framework-free domain types (e.g. Money)
 ├── ui/
 │   ├── primitives/  # design-system building blocks (Button, Input, Modal, ...)
-│   └── commerce/    # product-card foundation — mock data only, see its own header comment
-├── lib/          # cross-cutting: env, db, logger, api-response, rate-limit, request-id
+│   ├── commerce/    # ProductCard/Grid/categories — mock data only, see its own header comment
+│   ├── home/        # homepage sections (Hero, TrustStrip, StoryTeaser)
+│   └── site/        # nav data + the header's client island (mobile/cart drawers)
+├── lib/          # cross-cutting: env, db, logger, api-response, rate-limit, request-id, analytics
 └── proxy.ts      # Next.js 16's renamed `middleware` — request-id propagation only
 prisma/           # schema.prisma (no models yet — see its own header comment)
+scripts/          # prepare-standalone.mjs — see Testing notes below
 tests/
 ├── unit/         # Vitest — pure logic
 ├── integration/  # Vitest — against a real test database (none yet)
@@ -62,17 +71,23 @@ The non-negotiable rule, enforced at code review from this phase onward: **the f
 
 ## Testing notes
 
-- Unit tests (`npm test`) need nothing running — they're pure logic (`Money`, the API response envelope, rate limiting).
-- E2E tests (`npm run test:e2e`) spin up a production build via Playwright's `webServer` config. **On some Windows + Git Bash setups**, Playwright's own process spawning fails to resolve `npm` (`'npm' is not recognized...`) even though it works fine everywhere else, including GitHub Actions. If you hit this locally, start the server yourself first and reuse it:
+- Unit tests (`npm test`) need nothing running — they're pure logic (`Money`, the API response envelope, rate limiting, categories, analytics, the contact-form schema).
+- E2E tests (`npm run test:e2e`) spin up a production build via Playwright's `webServer` config — `npm run build && node scripts/prepare-standalone.mjs && node .next/standalone/server.js` (see that config's comment for why it's not `npm run start`: with `output: "standalone"`, `next start` doesn't serve the app correctly). **On some Windows + Git Bash setups**, Playwright's own process spawning fails to resolve `npm`/`node` (`'npm' is not recognized...`) even though it works fine everywhere else, including GitHub Actions. If you hit this locally, run the same sequence yourself first and reuse the server:
 
   ```bash
-  npm run build && npm run start &
+  npm run build
+  node scripts/prepare-standalone.mjs
+  node .next/standalone/server.js &
   npx playwright test
   ```
 
 ## Design system
 
-`npm run dev` then open <http://localhost:3000/dev/design-system> for a living showcase of every token and UI primitive (colors, type scale, buttons, form controls, cards, modal/drawer/toast, RTL/LTR comparison, etc.). It's a development aid only — the route 404s in a production build (see `tests/e2e/design-system-showcase.spec.ts`), so it can never end up live. Component source: `src/ui/primitives/` and `src/ui/commerce/`; tokens: `src/app/globals.css`. See [`docs/design/design-system.md`](./docs/design/design-system.md) for the source-of-truth spec these implement.
+`npm run dev` then open <http://localhost:3000/dev/design-system> for a living showcase of every token and UI primitive (colors, type scale, buttons, form controls, cards, modal/drawer/toast, RTL/LTR comparison, etc.). It's a development aid only — a production build never ships its real content (verified in `tests/e2e/design-system-showcase.spec.ts`; the literal HTTP status can be a Next.js 16 "soft 404" rather than a hard one under certain routes — see `docs/architecture/technical-decisions.md`'s Phase 3 section — but the showcase itself never reaches a real visitor either way). Component source: `src/ui/primitives/` and `src/ui/commerce/`; tokens: `src/app/globals.css`. See [`docs/design/design-system.md`](./docs/design/design-system.md) for the source-of-truth spec these implement.
+
+## API routes
+
+`GET /api/v1/health` — degrades gracefully if the database is unreachable (see Setup above). `POST /api/v1/contact` — validates and rate-limits a contact-form submission and logs it (`src/lib/logger.ts`); not yet wired to a real email/SMS notification — see the route's own header comment.
 
 ## CI
 

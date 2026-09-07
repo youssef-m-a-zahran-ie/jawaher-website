@@ -2,7 +2,7 @@
 
 Records what this UX stage decided on its own authority, what remains a business decision, what's deferred as a later technical call, and the result of cross-checking [`ux-specification.md`](./ux-specification.md) and [`customer-journeys.md`](./customer-journeys.md) against the architecture and functional requirements docs.
 
-Status: **Stage 0.8, + Phase 2 consistency check appended.** Last updated: 2026-09-07.
+Status: **Stage 0.8, + Phase 2 and Phase 3 consistency checks appended.** Last updated: 2026-09-07.
 
 ---
 
@@ -83,3 +83,22 @@ Phase 2 (Brand + Design System + UX Implementation Foundation) built the token s
 ### Outcome (Phase 2)
 
 One real, actionable gap (finding 1) — small, additive, deferred to the phase that needs it rather than fixed speculatively now. No requirement was silently dropped or narrowed to fit what was built.
+
+---
+
+## Phase 3 consistency check
+
+Phase 3 built the real public website shell and homepage against `ux-specification.md`, `customer-journeys.md`, and this file. Findings below are places implementation and spec needed a real decision, not restatements of what already matched cleanly.
+
+### Findings (Phase 3)
+
+1. **Category hover-dropdown (§3) deferred — nothing to put in it yet.** §3's desktop nav describes a hover dropdown per category. The only content it would ever hold is the subcategory/type filter set, which depends on real ERP attribute data — an open dependency (requirements §25) that predates this phase. Building an empty or fake dropdown would be worse than a plain link. **Classification: engineering decision, deferred to whichever phase gets real subcategory data** — the five categories still ship as direct, working nav links (requirements §2's own structural call), so nothing about discovery is broken in the meantime.
+2. **Search ships as a dedicated `/search` page, not the inline-panel/full-screen-overlay pattern (§8).** That pattern needs autocomplete/typeahead (2-character trigger, grouped suggestions, thumbnails) — real search ranking this phase explicitly excludes. A dedicated page is a genuine, working UI shape (form → results grid → no-results state, all per §8's non-ranking rules) rather than a demo of the eventual overlay. **Classification: engineering decision, deferred** — the header's search icon already points at `/search`; swapping in the overlay later is additive, not a rebuild.
+3. **PDP is foundation-level, not the full §7 spec.** No thumbnail gallery (single image), no variant chips (no real variant option data — see Phase 2's OTP-pattern-style reasoning: inventing chip labels would fabricate a product specification), no sticky add-to-cart bar. **Classification: correctly out of scope** — this phase's own brief says "Phase 3 does NOT implement the full catalog," and the DoD list never named PDP completeness. Recorded so the gap is explicit rather than discovered later.
+4. **Mobile bottom tab bar — still unresolved, unchanged.** §3/§19/requirements §25's open decision is untouched by this phase. The mobile drawer pattern that *was* built (hamburger → full-screen drawer, categories under an accordion, account/login entry) is exactly §3's designed alternative and doesn't preclude adding a bottom bar later — it's a header addition, not a competing architecture.
+5. **Cart drawer is the real interaction shell with no real line items — same shape as Phase 2's Toast-undo gap.** §9's drawer (line items, quantity stepper, subtotal, "إتمام الشراء") isn't buildable without real cart state, which this phase explicitly excludes. What's built — the drawer sliding from the reading-start edge, the empty state, the "متابعة التسوق" path — is genuinely the same component the Cart module will populate, not a placeholder that'll be thrown away.
+6. **Undo-on-delete (Phase 2 finding, §A) — still open, still correctly deferred.** No destructive cart/address action exists yet for it to apply to.
+
+### Outcome (Phase 3)
+
+No UX requirement was silently narrowed or dropped. Every deferral above (findings 1–5) is either blocked on data/decisions that predate this phase, or explicitly out of this phase's scope per its own brief — none was a surprise discovered mid-build, which is exactly what the phase's own pre-implementation audit (`docs/planning/feature-completeness-audit.md`) was meant to catch in advance. — small, additive, deferred to the phase that needs it rather than fixed speculatively now. No requirement was silently dropped or narrowed to fit what was built.

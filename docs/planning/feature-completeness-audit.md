@@ -4,7 +4,7 @@ Purpose: catch what the previous ERP project didn't — architectural decisions 
 
 Classification legend: **MVP** (required for launch) · **Production-required** (needed before real traffic, may land just after MVP) · **Later** (deliberately post-launch) · **Out of scope** (not part of this project) · **Open decision** (business/legal input needed) · **Already covered** (an existing doc already addresses it — cited).
 
-Status: Stage: Phase 1, + Phase 2 frontend-implications check appended. Last updated: 2026-09-07.
+Status: Stage: Phase 1, + Phase 2 frontend-implications check, + Phase 3 pre-implementation audit appended. Last updated: 2026-09-07.
 
 ---
 
@@ -150,3 +150,75 @@ Phase 2 built the design-token system and reusable UI primitives (`src/ui/primit
 ### Outcome
 
 No feature in the list is made harder by a Phase 2 decision. Two items carry forward as genuine, already-tracked gaps rather than new ones: the Toast undo-action slot (small, additive, deferred to the cart-deletion feature) and OTP entry UX (needs a product decision before it needs a component). Both are recorded in `docs/ux/ux-decisions.md`'s Phase 2 section, not fixed speculatively here.
+
+---
+
+## Phase 3 pre-implementation completeness audit
+
+Performed before building the public website shell, per this phase's brief ("we previously had a problem in the ERP project where important features were discovered only after implementation — do not repeat that"). Classification legend for this section only, as specified by the brief: **Already supported** (a real, working piece exists after this phase) · **Needs future implementation** (structurally accommodated, not built) · **Must influence Phase 3** (changed a decision actually made this phase) · **Open decision** (unchanged from earlier phases) · **Out of scope**.
+
+| Area | Classification | Note |
+|---|---|---|
+| Home | Already supported | Real homepage, `docs/ux/ux-specification.md` §4 section order |
+| Shop | Already supported (foundation) | Grid of all mock products; no filter/sort UI — Needs future implementation |
+| Category pages | Already supported | Intro + grid per category, `generateStaticParams` for all 5 |
+| Product pages | Already supported (foundation) | PDP-lite — no real gallery/variant chips/sticky bar; full spec is Needs future implementation |
+| Search | Already supported (foundation) | Dedicated page, client-independent substring match; real ranking/autocomplete is Needs future implementation |
+| Filtering | Needs future implementation | Primitives exist (Phase 2 audit); no filterable real dataset yet |
+| Sorting | Needs future implementation | Same reasoning |
+| Product availability | Already supported | `ProductAvailability` states rendered as badges everywhere a product appears |
+| Offers | Out of scope this phase | No active offer in mock data; homepage section correctly absent per its own "never shown empty" rule |
+| Cart | Already supported (shell only) | Drawer + always-empty state; **Must influence Phase 3**: this is why the cart icon/drawer had to be built as a real, reusable primitive-composition now, even with no persistence behind it |
+| Checkout | Out of scope this phase | Explicitly excluded by the brief |
+| Customer account | Already supported (placeholder) | `/account` exists so the header/drawer entry point isn't a dead link; real auth is Needs future implementation |
+| Guest checkout | Open decision | Unchanged (requirements §25) |
+| OTP | Open decision | Unchanged; entry UX still undesigned (Phase 2 finding, still open) |
+| Addresses | Needs future implementation | No UI yet; ordinary form primitives already cover it (Phase 2 audit) |
+| Shipping | Open decision | Zones/fees unchanged (requirements §25) |
+| Payment | Open decision | Gateway unchanged |
+| COD | Open decision | Approval unchanged — this is why no trust-strip point claims it (see Findings below) |
+| Online payment | Open decision | Unchanged |
+| Order confirmation | Out of scope this phase | No real orders exist yet |
+| Order tracking | Out of scope this phase | Same |
+| Returns | Later (Phase 1 New Finding #2) | Unchanged |
+| Refunds | Later | Unchanged |
+| Contact | Already supported | Real form, real (log-only) API route — see Findings below |
+| About | Already supported (partial) | Safe real content + explicitly marked pending narrative |
+| Policies | Already supported (structure) | One shared template, 5 slugs, content marked pending — never fabricated |
+| Privacy | Open decision (content) | Structure exists; text is a legal decision, same as Phase 1 New Finding #3 |
+| Terms | Open decision (content) | Same |
+| Shipping policy | Open decision (content) | Same |
+| Return policy | Open decision (content) | Same |
+| SEO | Already supported | Metadata, OG/Twitter, canonical via `metadataBase`, semantic HTML/heading hierarchy |
+| Metadata | Already supported | Per-route `generateMetadata`/static `metadata`, title template |
+| Sitemap | Already supported | `src/app/sitemap.ts` — deliberately excludes mock `/product/[slug]` URLs (see Findings) |
+| Robots | Already supported | `src/app/robots.ts` |
+| Structured data | Already supported (partial) | Organization/WebSite+SearchAction/BreadcrumbList real; `Product` JSON-LD deliberately not emitted against mock prices — see Findings |
+| Analytics | Already supported (abstraction only) | `track()` per `blueprint.md` §14, no GA4/GTM destination wired (this phase's brief) |
+| Consent | Open decision | Unchanged (Phase 1 New Finding #3); no banner built, `Modal` remains the natural host once the legal decision lands |
+| Accessibility | Already supported | Skip link, landmark regions, focus-visible, `aria-live` toasts, keyboard-operable drawers |
+| RTL | Already supported | Verified across header/drawers/breadcrumbs/forms |
+| Mobile navigation | Already supported | Hamburger → drawer, categories under an accordion; bottom tab bar remains **Open decision** (requirements §25, ux-specification §3) |
+| Error handling | Already supported | Branded `error.tsx`/`not-found.tsx`, Arabic non-technical copy |
+| Loading states | Already supported | Skeletons matching real content shape (`/shop`, root fallback) |
+| Empty states | Already supported | Cart, search-no-results, no-products-in-category, pending-content pages |
+| Future ERP integration | Out of scope this phase | Frontend stayed fully decoupled — see Data boundary below |
+| Future Website Admin integration | Out of scope this phase | Unchanged from Phase 1 New Finding #5 |
+
+### New findings from Phase 3 (not previously documented)
+
+These are genuine, non-obvious things discovered while implementing, not restatements of already-tracked open questions.
+
+1. **`Money` (and any class instance) cannot cross a Server-to-Client prop boundary.** `ProductCard`'s quick-add and the PDP's Add-to-Cart both originally took the whole `ProductCardData`/a class-bearing object as a prop into a `"use client"` component — this only ever worked in Phase 2 because the dev showcase imports mock data directly inside an already-client file, never passing it *as a prop from a Server Component*. The moment real pages (Server Components) rendered these same components, `next build` failed with "Only plain objects... Classes... are not supported." **Fixed by making the client surface as small as possible and plain-data-only**: `ProductCard` now self-contains its quick-add behavior via an internal `QuickAddButton` client island that takes only `productId`/`productName`/`category` (strings), never `Money`. `ProductGrid` reverted to a plain server component. This is now the binding pattern for any future component that needs client interactivity attached to catalog data — worth a permanent rule, recorded here and in `technical-decisions.md`.
+2. **`notFound()` becomes a "soft 404" (200 status + `noindex`) once a route sits under a `loading.tsx` ancestor — documented Next.js 16 behavior, not a bug.** Discovered because `/shop/[category]`, `/product/[slug]`, `/policies/[slug]`, and the dev-showcase guard all returned 200 instead of 404 for invalid params, even in dev mode. Next.js's own `notFound()` docs explain: a `loading.tsx` creates an implicit Suspense boundary, its fallback streams as an immediate 200, and the status can't change once streaming starts — Next mitigates this with an injected `<meta name="robots" content="noindex">`. Verified: the correct branded not-found UI renders and `noindex` is present in every case; only the literal status code is affected. Tests were written against the real, observable guarantee (correct UI + noindex) rather than fought against documented framework behavior. See `technical-decisions.md`'s Phase 3 section for the full explanation.
+3. **`next start` does not work with `output: "standalone"` (next.config.ts, set in Phase 1) — Next.js prints an explicit warning and doesn't serve the build correctly.** This affected every E2E run's server (`playwright.config.ts`), silently, since Phase 1 — never caught before because Phase 1/2 verification happened to not exercise the specific paths this broke. Fixed properly: `scripts/prepare-standalone.mjs` (Node `fs.cpSync`, cross-platform) copies static assets into `.next/standalone/`, and `playwright.config.ts`/the root README now run `node .next/standalone/server.js` directly — the same entry point the Dockerfile already used correctly. **Must influence Phase 3** in the sense that this was a pre-existing Phase 1 gap this phase's own testing happened to surface, not something introduced by Phase 3's routes themselves.
+4. **`ProductCard`'s PDP link pointed at `/products/[slug]` (plural) while this phase's canonical route is `/product/[slug]` (singular).** A latent Phase 2 bug (never exercised, since no `/product` route existed yet) — fixed to match the singular convention this phase's brief specified.
+5. **`Product` JSON-LD deliberately not emitted.** The structured-data utility (`src/lib/structured-data.ts`) supports `Organization`/`WebSite`/`BreadcrumbList` — all either static or mechanically derived from real routes — but not `Product`, since every product is still mock data (`src/ui/commerce/mock-products.ts`) and, unlike an on-page "(اسم تجريبي)" label, a crawler reading JSON-LD has no way to know a price is a placeholder. Add it once a real catalog exists.
+
+### Data boundary check
+
+No frontend code added this phase imports `src/lib/db.ts`, Prisma, or any ERP/payment/shipping SDK. `src/app/api/v1/contact/route.ts` is the one new server-side write path, and it only validates + rate-limits + logs (no database, no external call) — consistent with `module-boundaries.md`.
+
+### Outcome (Phase 3)
+
+No area in the checklist is made structurally harder to build later by a Phase 3 decision. The five findings above are the real, worth-remembering discoveries from this phase — three are framework-behavior facts (findings 1–3) worth a permanent place in `technical-decisions.md` so they aren't rediscovered the hard way in a later phase, and two are small, already-fixed bugs (findings 4–5, the second being a "correctly did nothing" finding).
