@@ -247,6 +247,8 @@ No ERP Adapter, sync job, or client of any kind is implemented this phase — co
 - **ERP → Website:** `getOrderStatus()` — would populate a future fulfillment-stage field this phase deliberately does not add (§14) — adding it now would mean guessing the ERP's actual stage vocabulary.
 - **Website → ERP (read-and-match only):** `reconcileCustomer()` — not called this phase; `Customer.erpCustomerId?` exists as the field it would eventually populate.
 
+**Phase 5 note:** this section's sketch was superseded by a full, dedicated audit — see [`../integration/erp-integration-readiness.md`](../integration/erp-integration-readiness.md) and the other `docs/integration/*.md` documents for the complete entity-by-entity ownership matrix, sync map, contract outline, gap analysis, and readiness verdict.
+
 ---
 
 ## 17. Returns / Refunds
