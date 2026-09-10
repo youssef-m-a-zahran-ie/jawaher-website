@@ -1,5 +1,7 @@
 # ERP Integration Readiness Assessment
 
+> **Phase 6 update (2026-09-10):** the real ERP has since been inspected. See `erp-integration-final-gap-analysis.md` for the updated verdict — the Website-side readiness conclusions below still hold, but the ERP side needs new capability built (no general-purpose inbound API existed for a non-Shopify caller), which is a materially larger scope than this document's "short preparation list" anticipated. This document is kept as-is below for its historical Phase 5 record.
+
 Phase 5 — ERP Integration Readiness & Gap Audit. This is the conclusion document — it answers the question the brief called "the most important": **is the current website architecture ready to connect to an ERP?** Everything below is based on reading the actual codebase and the already-approved canonical docs; no ERP was inspected, none of its behavior was assumed, and nothing was implemented.
 
 Status: Phase 5. Last updated: 2026-09-08.

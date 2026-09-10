@@ -1,5 +1,7 @@
 # ERP Sync Map & Order Lifecycle Trace
 
+> **Phase 6 update (2026-09-10):** the real ERP has since been inspected. The website-side order-lifecycle trace below is unchanged and still accurate. The ERP-side sync direction/payload placeholders are now resolved in `erp-order-lifecycle-mapping.md` and `erp-website-real-mapping.md` — most importantly, the ERP's real order-create operation does not exist for any non-Shopify caller yet (it must be built, not just mapped to), and the real status vocabulary (including two dead enum values, `qc`/`failed_delivery`, not to map onto) is now known. This document is kept as-is below for its historical Phase 5 record.
+
 Phase 5 — ERP Integration Readiness & Gap Audit. Preliminary synchronization directions and a full trace of the current website order lifecycle, marking every point a future ERP interaction would attach. Nothing here is final — every flow that depends on the real ERP's actual behavior is marked accordingly. No code changes, no external calls, no implementation.
 
 Status: Phase 5. Last updated: 2026-09-08.

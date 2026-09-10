@@ -1,5 +1,7 @@
 # ERP Integration Gap Analysis
 
+> **Phase 6 update (2026-09-10):** superseded by `erp-integration-final-gap-analysis.md`, which re-runs this same gap analysis against the real, inspected ERP. The headline change: this document's "zero BLOCKERs" finding was correct for the Website side but did not anticipate that the ERP side has no general-purpose inbound API and no non-Shopify order-creation path — both now rated BLOCKER in the Phase 6 document, since real new ERP capability must be built, not just mapped to. This document is kept as-is below for its historical Phase 5 record.
+
 Phase 5 — ERP Integration Readiness & Gap Audit. Every gap below was found by reading the actual current implementation (`prisma/schema.prisma`, `src/modules/*`, `src/app/api/v1/*`, `.github/workflows/ci.yml`) against the already-approved architecture and this phase's own findings in the other four `docs/integration/` documents — not invented to make this list look thorough.
 
 Action legend: **A** must be fixed *before* ERP integration begins · **B** can be implemented *during* ERP integration · **C** can be implemented *after* ERP integration · **D** requires a business decision · **E** requires ERP inspection · **F** later / out of scope.

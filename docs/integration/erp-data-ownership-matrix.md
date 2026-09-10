@@ -1,5 +1,7 @@
 # ERP Data Ownership Matrix
 
+> **Phase 6 update (2026-09-10):** the real ERP has since been inspected. Every "ERP verification required" note below is now resolved in `erp-website-real-mapping.md` — notably: compare-at price and product media are both now resolved as website-owned (the ERP has neither concept), the inventory-allocation-timing question is resolved as a real, currently-unbounded risk (see `erp-inventory-analysis.md`), and variant structure is confirmed flat (not option×value pairs), matching this project's existing choice. This document is kept as-is below for its historical Phase 5 record.
+
 Phase 5 — ERP Integration Readiness & Gap Audit. No ERP codebase or database was available to inspect this phase; every conclusion below comes from the current website implementation (`prisma/schema.prisma`, `src/modules/*`, `src/app/api/v1/*`) and the already-approved canonical docs (`blueprint.md` §5–§9, `data-ownership.md`, `technical-architecture.md` §3–§13, `module-boundaries.md`). Anywhere this document cannot determine an answer without seeing the real ERP, it says so explicitly — **"ERP verification required"** — rather than guessing.
 
 Status: Phase 5. Last updated: 2026-09-08.

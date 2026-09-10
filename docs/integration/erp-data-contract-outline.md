@@ -1,5 +1,7 @@
 # ERP Data Contract Outline (Preliminary)
 
+> **Phase 6 update (2026-09-10):** every `[BRACKETED PLACEHOLDER]` below is now resolved (or named as an explicit business decision) in `erp-website-real-mapping.md`, `erp-order-lifecycle-mapping.md`, and `erp-integration-final-gap-analysis.md`, based on direct inspection of the real ERP. This document is kept as-is below for its historical Phase 5 record — do not treat its placeholders as still-open without checking those documents first.
+
 Phase 5 — ERP Integration Readiness & Gap Audit. A skeleton for the future integration contract, derived entirely from the current website's confirmed requirements and implementation — **not** from any inspection of the real ERP, which was not available this phase. Every endpoint name, payload field, and identifier below is a deliberate placeholder in `[BRACKETS]`, marked **"Requires ERP inspection."** None of this is implemented; none of it should be treated as a real API contract until the actual ERP is inspected.
 
 Status: Phase 5 — outline only, not implementable as-is. Last updated: 2026-09-08.
