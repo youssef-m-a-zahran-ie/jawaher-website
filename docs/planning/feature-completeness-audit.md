@@ -128,7 +128,7 @@ Phase 2 built the design-token system and reusable UI primitives (`src/ui/primit
 | Area | UI foundation support | Gap? |
 |---|---|---|
 | Catalog / product display | `ProductCardData` type + `ProductCard`, `Card`, `PriceDisplay` | None |
-| Variants | `hasMultipleVariants` flag already in `ProductCardData`; `Tag` (selectable chip, `aria-pressed`) is the right shape for PDP variant selection per `ux-decisions.md` §A | None — not wired to a real PDP yet, correctly, since no PDP exists |
+| Variants | `hasMultipleVariants` flag already in `ProductCardData`; `Tag` (selectable chip, `aria-pressed`) is the right shape for PDP variant selection per `ux-decisions.md` §A | **Correction (Phase 9 audit, `catalog-inventory-gap-analysis.md` §3.2): a PDP now exists (`product/[slug]/page.tsx`) but still renders `MOCK_PRODUCTS`, and a multi-variant product shows "متاح قريبًا" rather than a working `Tag`-based picker — the shape is ready, the real wiring is not.** |
 | Pricing | `PriceDisplay` (current + struck-through compare-at); `Money` integer-minor-units foundation from Phase 1 | None |
 | Discounts / coupons | `Badge`, `Tag`, `Input` are generic enough for a coupon field/applied-discount chip | None — no coupon-specific component built, correctly, since no coupon UX is specified yet |
 | Inventory states | `ProductAvailability` (`in_stock`/`low_stock`/`out_of_stock`) already mirrors `data-ownership.md`'s Inventory states, mapped to `Badge` variants | None |
