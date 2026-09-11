@@ -94,9 +94,9 @@ Per the brief's explicit instruction ("do NOT implement a full idempotency syste
 
 ---
 
-## 10. RLS — untouched, per the brief's explicit instruction
+## 10. RLS — untouched in Phase 8, verified live in Phase 8.5
 
-`FORCE ROW LEVEL SECURITY`'s status remains exactly as Phase 6/7 found it: **unconfirmed**, tracked in the ERP's own `baseline/PRODUCTION_CHECKLIST.md` §G, unrelated to and not created by this phase. Nothing in Phase 8 modifies any RLS policy file under `prisma/rls/`. The new code path's tenant-isolation guarantee rests entirely on the same mechanism everything else in the ERP already relies on (`TenantContext`/`getSystemTenantContext()`, hand-written `where: companyId` filters) — confirmed by the new code following the identical pattern the tenant-scoping static checker (`npm run check:tenant-scope`) already verifies across the rest of the codebase; that checker was run against the full, changed codebase and passed with zero violations.
+At the time this phase was written, `FORCE ROW LEVEL SECURITY`'s status was still **unconfirmed** (tracked in the ERP's own `baseline/PRODUCTION_CHECKLIST.md` §G), unrelated to and not created by this phase. Nothing in Phase 8 modified any RLS policy file under `prisma/rls/`. **Phase 8.5 subsequently verified this live against the real dev database — see `erp-pre-integration-closure.md` §5: RLS is genuinely forced on all 88/88 tables, and the app's own connection role correctly bypasses it by design (ADR-0001), while `anon`/`authenticated` do not.** The new code path's tenant-isolation guarantee rests entirely on the same mechanism everything else in the ERP already relies on (`TenantContext`/`getSystemTenantContext()`, hand-written `where: companyId` filters) — confirmed by the new code following the identical pattern the tenant-scoping static checker (`npm run check:tenant-scope`) already verifies across the rest of the codebase; that checker was run against the full, changed codebase and passed with zero violations, both in Phase 8 and again in Phase 8.5.
 
 ---
 
@@ -116,7 +116,7 @@ No file under `src/modules/integrations/`, `src/modules/connectors/`, `src/app/a
 
 **Total new tests**: 15 (ERP) + 10 (Website) = 25, all passing. See §13 for exact commands run and their results.
 
-**What was deliberately NOT tested**: any live call against a real running ERP instance (would require a live Supabase project + a real provisioned connection — out of reach of this sandboxed session, and not needed to verify the logic itself, which is fully exercised above). A manual end-to-end smoke test (run `npm run provision:website-integration` in the ERP repo, put the printed values in the Website's `.env`, call `erpIntegrationService.checkConnection()` from a scratch script) is recommended before this foundation is built upon, but was not performed as part of this phase.
+**What was deliberately NOT tested in Phase 8**: any live call against a real running ERP instance. **This was subsequently performed in Phase 8.5** — see `erp-pre-integration-closure.md` §6 for the full live connectivity verification (real provisioned connection, real running ERP dev server, real HTTP calls from the actual Website client code, 9 scenarios covering success/missing/invalid/malformed/correlation-id/unavailable).
 
 ---
 
@@ -143,7 +143,7 @@ The existing `tests/rls/` suite was **deliberately not run** — its own `.env.e
 
 ## 14. Known limitations / deferred decisions (nothing hidden)
 
-- No rate limiting on the new ERP endpoint yet — the existing connector-runtime rate limiter is shaped for outbound-retry-after-failure, not inbound abuse protection; a future phase should add one before real traffic, especially since this is now a network-reachable endpoint even though it does nothing.
+- No rate limiting on the new ERP endpoint yet. **Reassessed explicitly in Phase 8.5** (`erp-pre-integration-closure.md` §5): deliberately left deferred (not a real security defect) because (a) a request with no credentials is rejected before any database call, so a flood of those costs almost nothing; (b) the credential space (a 192-bit random key plus a UUID connection id) makes brute-forcing computationally infeasible regardless of rate limiting; (c) the endpoint performs no mutation and exposes no data beyond `{status:"ok"}`. Worth adding once a real, data-bearing endpoint exists under this prefix — not urgent for a health check alone.
 - The generated API key format (`whk_<48 random base64url chars>`) is this phase's own choice, not something the plan documents specified — a reasonable, unremarkable default, not a business decision requiring sign-off.
 - No admin UI to view/rotate/revoke the website connection exists — `scripts/provision-website-integration.ts` is a CLI-only tool, matching `scripts/provision-user.ts`'s own precedent; a future phase may want a real admin screen (the existing `/admin/integrations/shopify` page is the model to follow) but this wasn't required for a minimal foundation.
 - `erpIntegrationService.checkConnection()` is not called from anywhere in the Website's running application yet (no health-check page, no startup check) — it exists and is tested, but nothing invokes it in production. Wiring it in (e.g. to an ops dashboard) is a reasonable small future step, not performed here to stay within "foundation only."

@@ -55,6 +55,10 @@ Per `erp-discovery.md` §5 and `erp-shopify-integration-analysis.md` §4, the ER
 
 ## 6. RLS verification plan (§15 of the brief)
 
+> **Phase 8.5 update (2026-09-11): VERIFIED, live, against the real dev database.** Every item in §6.1/§6.3 below was actually checked, not just planned. Result: `FORCE ROW LEVEL SECURITY` is genuinely set on all 88/88 public-schema tables; `anon`/`authenticated` (`rolbypassrls: false`) are correctly subject to it; the app's own `postgres`/`service_role` connection (`rolbypassrls: true`) deliberately bypasses it, exactly as ADR-0001 describes — not a gap, the designed defense-in-depth split working as intended. The new integration-auth code path was also specifically checked for cross-tenant leakage (a new test, `service.test.ts`'s "never resolves Company A's connection using Company B's real api_key") and found safe. Full detail and exact queries run: `erp-pre-integration-closure.md` §5. The section below is kept as the original plan for historical record.
+
+
+
 Phase 6 found `FORCE ROW LEVEL SECURITY`'s status **unconfirmed** on tenant-scoped tables (`baseline/PRODUCTION_CHECKLIST.md` §G, ERP's own disclosed open item), and that `DATABASE_URL` connects as a Postgres superuser (per ADR-0001), which bypasses RLS by default unless that flag is explicitly set. **This is not fixed in this phase** — per the brief's explicit instruction. This section defines what a future implementation phase must verify.
 
 ### 6.1 What must be verified
