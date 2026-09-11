@@ -52,6 +52,32 @@ export const catalogRepository = {
   findVariantsByIds(ids: string[], client: Db = db) {
     return client.variant.findMany({ where: { id: { in: ids } } });
   },
+
+  /**
+   * Phase 9.1 — replaces the /search page's former in-memory
+   * `Array.includes()` scan over mock data with the "indexed Postgres
+   * query (ILIKE)" `technical-architecture.md`'s own stack-decisions
+   * table already specifies. Matches product name OR category name,
+   * case-insensitive — the same two fields the mock implementation
+   * matched, deliberately not widened (e.g. to variant SKU) and
+   * deliberately not fuzzy — see catalog-adapters.ts's own header
+   * comment on why no Arabic-specific normalization was added: none was
+   * found already specified or implemented anywhere in this codebase to
+   * preserve, and inventing one is outside this phase's scope.
+   */
+  searchActiveProducts(query: string, client: Db = db) {
+    return client.product.findMany({
+      where: {
+        status: "ACTIVE",
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { category: { name: { contains: query, mode: "insensitive" } } },
+        ],
+      },
+      include: { category: true, variants: { orderBy: { sortOrder: "asc" } } },
+      orderBy: { sortOrder: "asc" },
+    });
+  },
 };
 
 export type CatalogProductRow = NonNullable<

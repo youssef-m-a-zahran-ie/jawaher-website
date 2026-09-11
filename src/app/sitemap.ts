@@ -6,11 +6,16 @@ import { CATEGORIES } from "@/ui/commerce/categories";
 const POLICY_SLUGS = ["shipping", "returns", "payment", "privacy", "terms"];
 
 /**
- * Deliberately excludes /product/[slug]: every product right now is
- * labeled mock data (src/ui/commerce/mock-products.ts) — asking search
- * engines to index placeholder product pages would be exactly the kind of
- * fake-data-leaking-as-real this phase's brief forbids. Add product URLs
- * here once a real catalog replaces the mock one. /account and /search are
+ * Deliberately excludes /product/[slug]. Phase 9.1 reconnected these
+ * pages to the real, database-backed catalog (src/ui/commerce/mock-products.ts
+ * is no longer their data source) — but the seeded content itself is
+ * still explicitly labeled placeholder (every name carries a literal
+ * " (اسم تجريبي)" suffix, prisma/seed.ts's SAMPLE_SUFFIX). Asking search
+ * engines to index and rank pages whose own data admits they're fake
+ * would be the same "fake-data-leaking-as-real" problem this project's
+ * docs have always forbidden — the backend being real doesn't change
+ * that. Add product URLs here once real (non-suffixed) catalog content
+ * exists, not merely once a real pipe exists. /account and /search are
  * excluded too (not indexable content pages).
  */
 export default function sitemap(): MetadataRoute.Sitemap {

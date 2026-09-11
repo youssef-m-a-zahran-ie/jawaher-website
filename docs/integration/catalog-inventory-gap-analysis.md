@@ -2,7 +2,7 @@
 
 Audit and design-mapping only — no business code was implemented to produce this document. Every claim below is verified against the real, current source of both repositories as of this phase (ERP `HEAD=bdd3e60`, Website `HEAD=1727a84`), not against prior-phase documentation alone. Where a prior document's claim was checked and found stale, that is called out explicitly.
 
-Status: Phase 9, Step 9.0, complete. Last updated: 2026-09-11.
+Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum.** Last updated: 2026-09-11.
 
 ---
 
@@ -364,3 +364,53 @@ Per the brief: no Catalog API, no Inventory API, no sync job, no changes to chec
 **Business readiness: PARTIALLY BLOCKED** — §9's genuine `C`-classified decisions (category display model, variant label policy, out-of-stock visibility, media sourcing, tax/price-display relationship) should be resolved before the sync job's exact contract is finalized, though none of them block starting step 2 of §12.
 
 **No BLOCKER-severity item was found.** No security defect was found in this audit's scope (it did not re-examine auth/RLS, already closed in Phase 8.5/8.5R). No schema change was made or found necessary to merely document this audit's findings.
+
+---
+
+## 16. Phase 9.1 addendum — Website Catalog Reconnection (implemented)
+
+Prerequisite (2) above is now done. ERP is not involved in any way in this section — confirmed by `git diff` showing zero ERP repository changes.
+
+### 16.1 What changed
+
+- `/shop`, `/shop/[category]`, `/product/[slug]`, `/search` now call `catalogService` directly (Server Components calling the service, not a self-fetch through `/api/v1/products` — the existing JSON API routes remain untouched, available for any real client-side/external consumer, unused by these pages by design). `MOCK_PRODUCTS`/`getMockProductBySlug`/`getMockProductsByCategoryName` no longer appear anywhere in these four files.
+- New `src/ui/commerce/catalog-adapters.ts` — the one place a `ProductView`/`VariantView` gets reshaped into the existing `ProductCardData` contract. `ProductCard`/`ProductGrid`/`PriceDisplay`/`QuickAddButton` were **not modified** — every adaptation the real catalog's richer shape required (genuine multiple variants, no media, no bestseller flag) lives in the adapter, not in a UI redesign.
+- New `catalogService.searchProducts()`/`catalogRepository.searchActiveProducts()` — the one new capability added (§3's "genuinely required minimal addition," not a new module, not a new architecture). Case-insensitive Postgres `contains` against product name and category name, replacing the old in-memory `Array.includes()` scan. **No Arabic-specific normalization was added** — none was found already implemented or specified anywhere in this codebase to preserve, and inventing one would have been exactly the "fuzzy search" this phase's brief forbade introducing.
+- PDP "Add to Cart" (`product-actions.tsx`) now calls the real, already-existing `POST /api/v1/cart/items` for single-SKU products — the prop was renamed `productId → variantId` (cart keys on the real `Variant.id`, not the product id). This is connecting to an existing, working boundary, not new cart business logic. The grid's own quick-add (`quick-add-button.tsx`) was deliberately **not** wired — only the PDP was named in this phase's scope; it remains toast-only.
+- **A real build-time bug was found and fixed**: `/shop` (no dynamic segment) was, by Next.js's default behavior, attempting to statically prerender at build time — confirmed directly (`npm run build` tried to query the real database mid-build). `export const dynamic = "force-dynamic"` was added to all four pages to guarantee per-request rendering, never a build-time snapshot of price/availability. This was not a hypothetical risk flagged in review; it was reproduced.
+- `generateStaticParams` removed from `/shop/[category]` and `/product/[slug]` for the same reason (was baking a listing/lookup shape around static params, now meaningless once the underlying data is live and changeable).
+- `sitemap.ts` and `structured-data.ts`'s Product-JSON-LD withholding: **kept, deliberately, with updated reasoning**. The original comments justified withholding by "the catalog is mock." That's no longer true (the pipe is real), but the seeded content itself still carries a literal `" (اسم تجريبي)"` suffix on every name — the actual reason for withholding (don't tell search engines a placeholder price is real) is unchanged. Updated both comments to say so precisely rather than leaving a now-inaccurate justification in place.
+- Home page's "best sellers" section (`MOCK_BEST_SELLERS`) was **deliberately left unreconnected** — not named in this phase's explicit scope (only /shop, /shop/[category], /product/[slug], /search were), and "best seller" has no backing concept in the real schema to reconnect to (confirmed absent, per §9's own **C** classification) — substituting an arbitrary stand-in (e.g. "first N products") would have silently invented a ranking policy nobody asked for.
+
+### 16.2 Data-contract audit outcome (§2 of the Phase 9.1 brief)
+
+| Mock field | Real source | Transformation | Classification |
+|---|---|---|---|
+| `ProductCardData.price`/`availability` (flat, one per product) | `VariantView.price`/`availability`, per real variant | `pickPrimaryVariant()`: first active variant, else first at all | **A** — safe derivation, not a business decision |
+| `imageAlt` | none (no media on either side) | Generic `صورة المنتج — ${name}` string | **A** |
+| `badge` (bestseller) | none (confirmed absent from schema) | Omitted entirely | **B** classification resolved to "don't fabricate" — no backend field exists to expose even if wired |
+| PDP description accordion text | `Product.description` (real column) | Direct use; the mock version's hardcoded template text is, not coincidentally, identical to what `seed.ts` actually seeds | **A** |
+| Search match fields | `Product.name` OR `Category.name`, same two fields the mock matched | Postgres `contains`, case-insensitive | **A** |
+| Arabic search normalization | **none found to preserve** | Not invented | **D** — deferred; would require a real specification first, none exists |
+| Category display (flat vs. `ProductCategory`'s real ERP hierarchy) | Not applicable to this phase — the Website's own `Category` table is already flat, matching `CATEGORIES`' nav config exactly | N/A | Resolved — this question only applies to the *ERP* sync (§9 of the main document), not this Website-internal reconnection |
+
+Nothing was silently invented; every **C**/**D** item above is named, not implemented.
+
+### 16.3 Cart boundary determination (§10 of the Phase 9.1 brief)
+
+- Can the PDP call the existing cart API? **Yes — confirmed and wired.** `POST /api/v1/cart/items` is real, session-cookie-based, already tested (`tests/integration/cart.test.ts`), and required no new business logic.
+- Was product/variant identity previously wrong? **Yes — a real, fixed defect.** The mock components passed `Product.id` where the cart API requires `Variant.id`; for single-SKU products these are different real ids. Fixed by resolving and passing the primary variant's id.
+- Does authoritative data come from the real catalog? **Yes**, via `catalogService.getProduct()`.
+- Remaining blocker: **the grid's quick-add button remains unwired** (deliberately, out of this phase's named scope — see §16.1) — not a technical blocker, a scope boundary. Multi-variant "Add to Cart" also remains unbuilt (needs a real variant-picker UI, explicitly excluded from this phase).
+
+### 16.4 Testing
+
+| Layer | File | Result |
+|---|---|---|
+| Unit (pure, no DB) | `tests/unit/catalog-adapters.test.ts` | 9/9 passing |
+| Integration (real DB, `skipIf`) | `tests/integration/catalog-storefront.test.ts` | 10 tests written against the established `isDatabaseAvailable()`/fixture pattern; **skipped in this sandbox** (confirmed `ECONNREFUSED` — no local Postgres/Docker available here, same disclosed, pre-existing limitation as every other integration test in this repo) — will run for real in CI or on a machine with the local database up |
+| Full suite | `npm test` | 92 passed, 32 skipped (was 83/22 before this phase — net +9 real, +10 honestly-skipped), 0 failed |
+| Typecheck/lint | `npm run typecheck` / `npm run lint` | Clean |
+| Production build | `npm run build` | **Failed once for a real reason (§16.1's build-time DB call), fixed, then succeeded** — route manifest confirms `/shop`, `/shop/[category]`, `/product/[slug]`, `/search` are all `ƒ` (dynamic, server-rendered on demand), not statically prerendered |
+
+No test result in this document is asserted without having actually been run.

@@ -1,7 +1,8 @@
 import { Search as SearchIcon } from "lucide-react";
 import type { Metadata } from "next";
 
-import { MOCK_PRODUCTS } from "@/ui/commerce/mock-products";
+import { catalogService } from "@/modules/catalog";
+import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Button } from "@/ui/primitives/button";
 import { EmptyState } from "@/ui/primitives/empty-state";
@@ -17,19 +18,32 @@ type PageProps = { searchParams: Promise<{ q?: string }> };
 /**
  * A dedicated page, not the inline-panel/full-screen-overlay pattern
  * docs/ux/ux-specification.md §8 specifies — that pattern needs
- * autocomplete/typeahead, which needs real search ranking this phase
- * explicitly doesn't build. This establishes the /search route (this
- * phase's brief) with a plain GET form (works with zero client JS) doing a
- * simple client-independent substring match over mock data — a real UI
- * shape, not a demo of the eventual normalized/ranked search. See
- * docs/ux/ux-decisions.md's Phase 3 section.
+ * autocomplete/typeahead, out of scope here too. Plain GET form (works
+ * with zero client JS), unchanged.
+ *
+ * Phase 9.1 — reconnected to `catalogService.searchProducts()` (was an
+ * in-memory `Array.includes()` scan over `MOCK_PRODUCTS`), which runs a
+ * case-insensitive Postgres `contains` query against product name and
+ * category name — the same two fields the mock version matched, no more,
+ * no fewer. No Arabic-specific normalization (ة/ه, أ/إ/ا, diacritics) was
+ * added: none was found already implemented or specified anywhere in this
+ * codebase to preserve, and this phase's brief explicitly forbids
+ * introducing fuzzy search or a search engine — inventing normalization
+ * rules would be exactly that. See
+ * docs/integration/catalog-inventory-gap-analysis.md's Phase 9.1 addendum.
+ *
+ * `dynamic = "force-dynamic"` added explicitly (belt-and-suspenders —
+ * reading `searchParams` already makes a page dynamic in Next.js by
+ * itself, but every other reconnected catalog page in this phase needed
+ * this explicitly, confirmed by a real failed build attempt on /shop, so
+ * it's stated here too rather than relied on implicitly).
  */
+export const dynamic = "force-dynamic";
+
 export default async function SearchPage({ searchParams }: PageProps) {
   const { q } = await searchParams;
   const query = q?.trim() ?? "";
-  const results = query
-    ? MOCK_PRODUCTS.filter((product) => product.name.includes(query) || product.category.includes(query))
-    : [];
+  const results = query ? toProductCardDataList(await catalogService.searchProducts(query)) : [];
 
   return (
     <PageContainer className="py-10">

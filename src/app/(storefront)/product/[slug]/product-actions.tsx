@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { track } from "@/lib/analytics";
 import { Button } from "@/ui/primitives/button";
@@ -8,7 +8,13 @@ import { useToast } from "@/ui/primitives/toast";
 import type { ProductAvailability } from "@/ui/commerce/types";
 
 export type ProductActionsProps = {
-  productId: string;
+  /**
+   * Phase 9.1 — renamed from `productId`: this must be the real
+   * `Variant.id` (what `POST /api/v1/cart/items` actually keys on), not
+   * the parent Product's id. For a single-SKU product the PDP resolves
+   * this to that one real variant's id (see page.tsx's `pickPrimaryVariant`).
+   */
+  variantId: string;
   productName: string;
   category: string;
   availability: ProductAvailability;
@@ -21,20 +27,29 @@ export type ProductActionsProps = {
  * src/ui/commerce/quick-add-button.tsx's comment for the full
  * explanation; this component hit the exact same bug). Fires `view_item`
  * on mount (docs/ux/ux-specification.md §24) and renders Add to Cart.
- * Multi-variant products don't get a working Add to Cart here — there's
- * no real variant option data anywhere in ProductCardData (inventing
- * sizes/weights would be fabricating a product specification, which this
- * phase's brief forbids), so this honestly says a choice is needed
- * instead of faking a picker. Toast-only feedback, no real cart
- * persistence, matching the cart-drawer's always-empty state in
- * src/ui/site/header-actions.tsx.
+ *
+ * Multi-variant products still don't get a working Add to Cart here —
+ * real variant data now exists (Phase 9.1), but rendering a real picker is
+ * a UI addition this phase's brief explicitly excludes ("do not redesign
+ * UI... do not implement Products Experience"); this honestly says a
+ * choice is needed instead of faking or half-building a picker.
+ *
+ * Phase 9.1 — single-SKU Add to Cart now calls the real, already-existing
+ * `POST /api/v1/cart/items` (session-cookie based, no new endpoint or
+ * business logic added — this is exactly "connect to the existing
+ * boundary where already supported" per that phase's brief §6/§10). The
+ * grid's own quick-add (`quick-add-button.tsx`) is deliberately NOT wired
+ * here — out of this phase's explicitly-named scope (only the PDP is
+ * named), left toast-only, flagged in
+ * docs/integration/catalog-inventory-gap-analysis.md.
  */
-export function ProductActions({ productId, productName, category, availability, hasMultipleVariants }: ProductActionsProps) {
+export function ProductActions({ variantId, productName, category, availability, hasMultipleVariants }: ProductActionsProps) {
   const { show } = useToast();
+  const [isPending, setIsPending] = useState(false);
 
   useEffect(() => {
-    track("view_item", { item_id: productId, item_category: category });
-  }, [productId, category]);
+    track("view_item", { item_id: variantId, item_category: category });
+  }, [variantId, category]);
 
   if (availability === "out_of_stock") {
     return (
@@ -52,14 +67,29 @@ export function ProductActions({ productId, productName, category, availability,
     );
   }
 
+  async function handleAddToCart() {
+    setIsPending(true);
+    try {
+      const response = await fetch("/api/v1/cart/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId, quantity: 1 }),
+      });
+      if (!response.ok) {
+        show({ title: "تعذّرت الإضافة إلى السلة — حاول مرة أخرى", variant: "danger" });
+        return;
+      }
+      track("add_to_cart", { item_id: variantId, item_category: category });
+      show({ title: `أُضيف "${productName}" إلى السلة`, variant: "success" });
+    } catch {
+      show({ title: "تعذّرت الإضافة إلى السلة — تحقق من الاتصال", variant: "danger" });
+    } finally {
+      setIsPending(false);
+    }
+  }
+
   return (
-    <Button
-      fullWidth
-      onClick={() => {
-        track("add_to_cart", { item_id: productId, item_category: category });
-        show({ title: `أُضيف "${productName}" إلى السلة`, variant: "success" });
-      }}
-    >
+    <Button fullWidth disabled={isPending} onClick={handleAddToCart}>
       أضف إلى السلة
     </Button>
   );

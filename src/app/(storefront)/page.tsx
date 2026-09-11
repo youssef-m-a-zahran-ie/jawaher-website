@@ -15,6 +15,18 @@ import { PageContainer } from "@/ui/primitives/page-container";
  * (rendered by the root layout). No additional sections were added beyond
  * that order — the root layout's default title/description already cover
  * the homepage, so no metadata export is needed here either.
+ *
+ * "Best sellers" (below) is DELIBERATELY STILL `MOCK_BEST_SELLERS`, not
+ * reconnected by Phase 9.1. That phase's brief named /shop, /shop/
+ * [category], /product/[slug], and /search explicitly — this page wasn't
+ * one of them, and "best seller" has no real backing concept to reconnect
+ * to even if it had been: no "featured"/"bestseller" flag exists on the
+ * real `Product`/`Variant` schema (confirmed, not just unpopulated — see
+ * docs/integration/catalog-inventory-gap-analysis.md §9's classification
+ * of this exact question as **C — requires a business decision**, not a
+ * data-wiring task). Left as-is rather than silently reconnected to an
+ * arbitrary substitute (e.g. "first N real products") that would quietly
+ * invent a ranking the business never asked for.
  */
 export default function HomePage() {
   const featuredCategory = CATEGORIES.find((category) => category.featured) ?? CATEGORIES[0];

@@ -49,6 +49,14 @@ export const catalogService = {
     return Promise.all(rows.map(mapProduct));
   },
 
+  /** Phase 9.1 — backs the /search page against real data; see repository.ts's own comment on match fields/scope. */
+  async searchProducts(query: string): Promise<ProductView[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const rows = await catalogRepository.searchActiveProducts(trimmed);
+    return Promise.all(rows.map(mapProduct));
+  },
+
   /** Used by Cart/Checkout to re-validate a line item against live data — never trust a client-supplied price/availability. */
   async getVariantForPurchase(variantId: string) {
     const variant = await catalogRepository.findVariantById(variantId);

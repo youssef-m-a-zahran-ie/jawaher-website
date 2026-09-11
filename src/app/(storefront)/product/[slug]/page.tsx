@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { breadcrumbJsonLd } from "@/lib/structured-data";
-import { CATEGORIES } from "@/ui/commerce/categories";
-import { getMockProductBySlug, getMockProductsByCategoryName, MOCK_PRODUCTS } from "@/ui/commerce/mock-products";
+import { catalogService } from "@/modules/catalog";
+import { pickPrimaryVariant, toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { PriceDisplay } from "@/ui/commerce/price-display";
 import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Accordion } from "@/ui/primitives/accordion";
@@ -16,15 +16,29 @@ import { ProductActions } from "./product-actions";
 
 type PageProps = { params: Promise<{ slug: string }> };
 
-export function generateStaticParams() {
-  return MOCK_PRODUCTS.map((product) => ({ slug: product.slug }));
-}
+/**
+ * Phase 9.1 — reconnected to `catalogService.getProduct()` (was
+ * `getMockProductBySlug()`/`MOCK_PRODUCTS`). `generateStaticParams`
+ * removed AND `dynamic = "force-dynamic"` added explicitly, for the same
+ * reason as /shop and /shop/[category] (confirmed the hard way there —
+ * `npm run build` genuinely queried the real database mid-build without
+ * this): a real, changeable catalog must never be baked into a
+ * build-time static page — see this phase's brief §12. Product JSON-LD
+ * deliberately still NOT
+ * added — reconnecting the data path doesn't resolve the actual reason it
+ * was withheld (the seeded content itself is still explicitly labeled
+ * placeholder — `SAMPLE_SUFFIX`, " (اسم تجريبي)" — emitting structured
+ * data asserting real product facts for admittedly-fake content would be
+ * exactly the "invented product claim" §8 forbids). Revisit once real
+ * catalog content (not just a real pipe) exists.
+ */
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = getMockProductBySlug(slug);
+  const product = await catalogService.getProduct(slug);
   if (!product) return {};
-  return { title: product.name, description: `${product.name} — ${product.category}، جواهر الخير.` };
+  return { title: product.name, description: `${product.name} — ${product.category.name}، جواهر الخير.` };
 }
 
 const AVAILABILITY_LABEL: Record<string, { label: string; variant: "success" | "warning" | "neutral" }> = {
@@ -36,27 +50,34 @@ const AVAILABILITY_LABEL: Record<string, { label: string; variant: "success" | "
 /**
  * A foundation-level PDP, not the full spec in
  * docs/ux/ux-specification.md §7 (no real gallery/variant chips/sticky
- * add-to-cart bar — those need real product media and variant data that
- * don't exist yet). Establishes the route and reuses every applicable
- * approved primitive, per this phase's brief ("Phase 3 does NOT implement
- * the full catalog"). See docs/planning/feature-completeness-audit.md's
- * Phase 3 section for what's deferred and why.
+ * add-to-cart bar — those need real product media, still absent per
+ * catalog-inventory-gap-analysis.md, and a full variant-picker UI this
+ * phase's brief explicitly excludes). Reuses every applicable approved
+ * primitive, unchanged.
+ *
+ * Phase 9.1 — the top-of-page price/availability/add-to-cart section is
+ * shown for the product's "primary" variant (first active, else first at
+ * all — `pickPrimaryVariant`, see catalog-adapters.ts for why this is a
+ * safe derivation, not an invented rule) — the real catalog can now have
+ * genuinely multiple variants per product, which the mock data never
+ * modeled at all.
  */
 export default async function ProductPage({ params }: PageProps) {
   const { slug } = await params;
-  const product = getMockProductBySlug(slug);
+  const product = await catalogService.getProduct(slug);
   if (!product) notFound();
 
-  const category = CATEGORIES.find((item) => item.name === product.category);
-  const related = getMockProductsByCategoryName(product.category)
-    .filter((item) => item.id !== product.id)
-    .slice(0, 4);
-  const availability = AVAILABILITY_LABEL[product.availability];
+  const primary = pickPrimaryVariant(product);
+  if (!primary) notFound(); // a product with zero variants has nothing sellable to show
+
+  const relatedProducts = await catalogService.listProductsByCategory(product.category.slug);
+  const related = toProductCardDataList(relatedProducts.filter((item) => item.id !== product.id)).slice(0, 4);
+  const availability = AVAILABILITY_LABEL[primary.availability];
 
   const breadcrumbItems = [
     { label: "الرئيسية", href: "/" },
     { label: "المتجر", href: "/shop" },
-    ...(category ? [{ label: category.name, href: `/shop/${category.slug}` }] : []),
+    { label: product.category.name, href: `/shop/${product.category.slug}` },
     { label: product.name },
   ];
 
@@ -66,22 +87,26 @@ export default async function ProductPage({ params }: PageProps) {
       <Breadcrumb items={breadcrumbItems} />
 
       <div className="mt-6 grid gap-8 sm:grid-cols-2 sm:gap-12">
-        <ImagePlaceholder variant="feature" label={product.imageAlt} caption="الصورة الحقيقية قادمة قريبًا" />
+        <ImagePlaceholder
+          variant="feature"
+          label={`صورة المنتج — ${product.name}`}
+          caption="الصورة الحقيقية قادمة قريبًا"
+        />
 
         <div className="flex flex-col gap-4">
-          <p className="text-body-sm text-text-tertiary">{product.category}</p>
+          <p className="text-body-sm text-text-tertiary">{product.category.name}</p>
           <h1 className="text-h1 font-extrabold text-text-primary">{product.name}</h1>
           <Badge variant={availability.variant} className="w-fit">
             {availability.label}
           </Badge>
-          <PriceDisplay price={product.price} compareAtPrice={product.compareAtPrice} size="lg" />
+          <PriceDisplay price={primary.price} compareAtPrice={primary.compareAtPrice ?? undefined} size="lg" />
 
           <div className="mt-2">
             <ProductActions
-              productId={product.id}
+              variantId={primary.id}
               productName={product.name}
-              category={product.category}
-              availability={product.availability}
+              category={product.category.name}
+              availability={primary.availability}
               hasMultipleVariants={product.hasMultipleVariants}
             />
           </div>
@@ -92,7 +117,7 @@ export default async function ProductPage({ params }: PageProps) {
                 {
                   id: "description",
                   title: "الوصف",
-                  content: `منتج من فئة ${product.category} — من جواهر الخير.`,
+                  content: product.description ?? `منتج من فئة ${product.category.name} — من جواهر الخير.`,
                   defaultOpen: true,
                 },
                 {
