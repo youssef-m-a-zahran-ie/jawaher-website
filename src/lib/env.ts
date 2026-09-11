@@ -40,10 +40,25 @@ const envSchema = z.object({
   // this env var, not the code, once the business confirms a real value.
   INVENTORY_RESERVATION_TTL_MINUTES: z.coerce.number().int().positive().optional(),
 
+  // --- ERP Adapter (Phase 8 — integration foundation) ---
+  // Server-only, consumed exclusively by src/modules/erp-integration/. All
+  // three are optional here (same convention as INTERNAL_API_SECRET above)
+  // so the app still boots with the ERP connection unconfigured — the
+  // adapter throws a clear ErpNotConfiguredError at call time instead, per
+  // erp-integration-security-plan.md §4's "server-side only, never
+  // hardcoded" requirement. Never prefixed NEXT_PUBLIC_ — see this file's
+  // own header comment on why that alone keeps it out of any client bundle.
+  ERP_BASE_URL: z.string().url().optional(),
+  /** The api_key IntegrationSecret printed once by ERP JAW's scripts/provision-website-integration.ts. */
+  ERP_API_KEY: z.string().min(1).optional(),
+  /** The CompanyIntegrationConnection id printed by the same script — sent as the x-erp-connection-id header, never secret on its own. */
+  ERP_CONNECTION_ID: z.string().min(1).optional(),
+  /** Explicit request timeout for every ERP call (technical-architecture.md §4) — defaults to 5000ms if unset. */
+  ERP_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+
   // --- Reserved for later phases (optional until implemented) ---
   SESSION_SECRET: z.string().min(1).optional(),
   OTP_PROVIDER_API_KEY: z.string().min(1).optional(),
-  ERP_BASE_URL: z.string().min(1).optional(),
   PAYMENT_PROVIDER_API_KEY: z.string().min(1).optional(),
   SHIPPING_PROVIDER_API_KEY: z.string().min(1).optional(),
   ANALYTICS_GA4_ID: z.string().min(1).optional(),
