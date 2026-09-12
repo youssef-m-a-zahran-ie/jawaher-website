@@ -2,7 +2,7 @@
 
 Audit and design-mapping only — no business code was implemented to produce this document. Every claim below is verified against the real, current source of both repositories as of this phase (ERP `HEAD=bdd3e60`, Website `HEAD=1727a84`), not against prior-phase documentation alone. Where a prior document's claim was checked and found stale, that is called out explicitly.
 
-Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum.** Last updated: 2026-09-11.
+Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum.** Last updated: 2026-09-12.
 
 ---
 
@@ -414,3 +414,78 @@ Nothing was silently invented; every **C**/**D** item above is named, not implem
 | Production build | `npm run build` | **Failed once for a real reason (§16.1's build-time DB call), fixed, then succeeded** — route manifest confirms `/shop`, `/shop/[category]`, `/product/[slug]`, `/search` are all `ƒ` (dynamic, server-rendered on demand), not statically prerendered |
 
 No test result in this document is asserted without having actually been run.
+
+---
+
+## 17. Phase 9.2 addendum — ERP Inventory Availability Resolution (implemented, ERP-side only)
+
+Closes technical gap #11.1/§7.2/§11 above: **ERP now has a stock-source-redirect-aware availability read**, built ahead of exposing any inventory API to the Website (which remains not built — no Website change was made this phase, confirmed by `git diff` in the Website repo showing zero changes for this addendum beyond this documentation).
+
+### 17.1 Root cause (confirmed, not assumed)
+
+`getStockAvailability()`/`getStockAvailabilityForVariants()` (ERP `src/modules/warehouse/services/{stock-move,reservation}.service.ts`) both query `StockQuant` directly by the variant id they're given. A weight-tier variant with `ProductVariant.stockSourceVariantId` set never carries its own `StockQuant` rows — all physical stock lives on the source variant. The ERP's own order-alert path (`computeStockAlertsBatch`, `sales-order.service.ts`) already avoided this correctly, but only because it happens to pre-resolve via `resolveOrderLineComponents()` before calling the availability function — no equivalent existed as a standalone, reusable read.
+
+### 17.2 Corrected resolution path
+
+New function `getSellableAvailability(ctx, productVariantIds)` in the same file as `getStockAvailabilityForVariants` (`reservation.service.ts`) — composes, rather than reimplements:
+
+```
+sellable variant ids
+  -> resolveOrderLineComponents(ctx, ids.map(id => ({productVariantId: id, quantity: 1})))   [Products module, UNMODIFIED]
+  -> unique real component variant ids + their per-unit ratio
+  -> listStockQuantsForVariants(ctx, {productVariantIds: componentIds})   [Warehouse module, UNMODIFIED, company-wide]
+  -> per component: floor((onHand - reserved) / unitsPerSellableUnit)
+  -> per requested variant: min(...) across its components (== itself for the ordinary 1-component case)
+```
+
+Neither `resolveOrderLineComponents` nor either existing availability function was modified — this is purely additive (confirmed: `git diff` shows 0 deletions in `reservation.service.ts`). The cross-module import (Warehouse importing from Products) follows an already-established precedent (`warehouse-operations.service.ts` already imports `@/modules/products/repositories/bom.repository` directly) — not a new architectural direction.
+
+### 17.3 Classification of read paths found (§3 of the brief)
+
+| Function | Classification | Disposition |
+|---|---|---|
+| `getStockAvailability` (single variant, company-wide) | Authoritative for a real, stock-bearing variant's own physical numbers | Unchanged — still correct for its own narrow job |
+| `getStockAvailabilityForVariants` (batch, per-warehouse) | Authoritative, but requires pre-resolved component ids (as its own doc comment already stated) | Unchanged — its one real caller (`computeStockAlertsBatch`) already pre-resolves correctly |
+| `listStockQuants` / `listLowStockVariants` | Authoritative, direct physical-stock views for Warehouse Ops (by variant/location) | Out of scope — these are correctly variant-id-literal (a redirected variant has nothing to show here by design; nothing to fix) |
+| `resolveOrderLineComponents` | Authoritative resolution logic (the one place `stockSourceVariantId`/assembly-BOM composition is interpreted) | Unchanged, reused as-is |
+| `aggregateStockLines` | Derived (consumption-total helper, packing slips) | Unrelated to availability; not touched |
+| **`getSellableAvailability` (new)** | **Authoritative for "is this sellable variant in stock," redirect-aware** | New this phase |
+
+### 17.4 Invariant confirmed
+
+For a sellable variant with `stockSourceVariantId`, availability is now computed from the physical source variant's real inventory, subject to the schema's actual `stockSourceRatio` (or `BomLine.quantity` for a bundle) — never an assumed 1:1 ratio. Verified directly: a redirect at ratio 0.25 against 10 physical units correctly reports 40 sellable units (test 2b), not 10.
+
+### 17.5 Edge cases — documented, not invented (§6/§13)
+
+| Case | Behavior | Basis |
+|---|---|---|
+| Missing/dangling source | Reports `available: 0` | The company-scoped `StockQuant` query simply matches nothing — same safe path as any real "no stock" case, no special-casing added |
+| Inactive/discontinued source variant | Physical stock still counts, unchanged | Confirmed: neither the existing resolver nor the new function ever reads the source variant's `status` — preserving exactly the existing order-consumption behavior, not a new rule |
+| Cyclic reference (A→B, B→A at the data level) | Resolves in exactly one hop; never recurses | Structural property of the reused, non-recursive `resolveOrderLineComponents` — inherited, not newly added |
+| Non-positive `stockSourceRatio`/BOM quantity | Treated as zero contribution (the safe, never-overselling direction) + logged via the existing `AppLog`-backed `logger` | No existing write-path validation exists for this either (§13: preserving convention, not inventing a stricter one); logging reuses the existing mechanism, no new error code |
+| Multiple sellable variants redirecting to the same source | Each independently reads the source's full real total — never double-counted or split | Verified directly (test 3) |
+| Assembly BOM (bundle) | `available` = `min` across every real component's own derived count — the standard, forced "how many can be assembled" formula | Not an invented business rule — the direct mathematical consequence of the existing consumption model, applied to a read instead of a write; flagged in §17.7 for business awareness, not held back on it |
+
+### 17.6 Tenant isolation — verified, not assumed
+
+Test 9 (`reservation.service.test.ts`) constructs a real scenario: Company A's variant has `stockSourceVariantId` pointing to an id that genuinely has stock — but under Company B. Result: `available: 0`, not Company B's real 500 units. This holds structurally because every query in the composition (`findStockSourcesByIds`, `listStockQuantsForVariants`) already filters by `companyId: ctx.companyId` — there is no code path in this composition that can cross the boundary, with or without a hostile/malformed `stockSourceVariantId` value. Test 9b confirms the positive case (Company A correctly resolves through its own same-id source) isn't broken by the same fix.
+
+### 17.7 Business decisions — none invented, one flagged for awareness
+
+No business decision was required to build this fix (it's a pure correctness/domain-arithmetic correction, not a policy choice). One item is flagged for awareness, not blocking: **assembly-BOM (bundle) availability now follows the mathematically-forced "min across real components" rule** (§17.5) — correct per the existing schema/consumption model, but never previously exercised by any read path. If the business has additional real-world constraints on bundle availability beyond raw component math (e.g., packaging capacity, assembly labor time), those are out of this model entirely and would need to be raised separately — not assumed here either way.
+
+### 17.8 Future Inventory API readiness
+
+The internal contract this phase establishes (`SellableVariantAvailability` — requested variant, physical source(s), on-hand, reserved, derived available) is exactly what a future Website-facing inventory endpoint should be built on, per `erp-api-contracts.md` §1.2 and `erp-inventory-analysis.md` §7.3 (both already anticipated "the resolution step must happen before the floor-at-zero step" — now a real, tested function, not just a design note). That future endpoint would additionally floor `available` at zero before returning it to the Website (this function deliberately does not, to stay maximally informative internally) and would never expose `sources` (an ERP-internal detail). **Still not built this phase, per its own explicit instruction** — no Website Inventory API, no ERP Catalog API, no sync job.
+
+### 17.9 Testing (§10/§15 of the brief) — what was actually executed
+
+| Test | File | Result |
+|---|---|---|
+| All 10 required scenarios (+3 supplementary: ratio≠1, non-positive ratio, empty input) | `ERP JAW/src/modules/warehouse/services/reservation.service.test.ts` | **15/15 passing, actually executed** — no real database touched (module-level mock of `@/lib/prisma`, filtering by `companyId`/`id in (...)` exactly like the real queries, so the tenant-isolation test is a genuine proof, not a tautology) |
+| Regression: existing Phase 8/8.5 ERP unit tests | `integration-auth/service.test.ts`, `.../health/route.test.ts` | 16/16 still passing, run together with the new suite |
+| ERP typecheck / lint / tenant-scope check | `npm run typecheck` / `lint` / `check:tenant-scope` | All clean (138 files scanned, 0 violations) |
+| ERP production build | `npm run build` | Succeeded |
+| Website-side tests | — | **Not run — no Website file was touched this phase**, so there was nothing to re-verify there |
+
+Nothing in this addendum is asserted without having been actually executed, per the brief's explicit instruction to distinguish executed/skipped/unavailable — everything above was executed; nothing was skipped or unavailable this phase (no live-database dependency exists in the new code at all, by design, since it's mocked at the Prisma-module level).
