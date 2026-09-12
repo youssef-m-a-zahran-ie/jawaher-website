@@ -41,11 +41,19 @@ enum ProductStatus {
 
 model Category {
   id        String   @id @default(uuid())
-  slug      String   @unique
-  name      String
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// Reference only, never the primary key — mirrors Product.erpProductId's
+  /// own convention exactly. Added Phase 9.4: the Category ERP Catalog API
+  /// DTO (erp-catalog-inventory-api.md §7) has no field the Website could
+  /// otherwise safely match on for idempotent sync (name/slug are both
+  /// explicitly unsafe as a sync identity — see website-erp-catalog-sync.md
+  /// §7). This is the one schema change this phase required; documented
+  /// there before being made, per that phase's own instruction.
+  erpCategoryId String?  @unique
+  slug          String   @unique
+  name          String
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   products Product[]
 
@@ -104,6 +112,67 @@ model Variant {
 
   @@index([productId])
   @@map("variants")
+}
+
+// ---------------------------------------------------------------------
+// Catalog sync observability + concurrency guard — Phase 9.4. The second
+// (and last) schema addition this phase required, for the same reason as
+// Category.erpCategoryId above: documented in website-erp-catalog-sync.md
+// §12/§14 before being made. Deliberately minimal — no queue/event-bus
+// table, just enough to (a) give the incremental-sync "updatedSince"
+// watermark somewhere durable to live, (b) record counts for
+// observability without storing secrets or full ERP payloads, and (c)
+// give the sync a real, DB-native mutual-exclusion guard (§14 below)
+// instead of only documenting the concurrency risk.
+// ---------------------------------------------------------------------
+
+enum CatalogSyncType {
+  FULL
+  INCREMENTAL
+}
+
+enum CatalogSyncStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model CatalogSyncRun {
+  id                  String            @id @default(uuid())
+  type                CatalogSyncType
+  status              CatalogSyncStatus @default(RUNNING)
+  /// The next incremental sync's `updatedSince` watermark is this run's own
+  /// startedAt (not completedAt) once it SUCCEEDED — see
+  /// website-erp-catalog-sync.md §11 for why.
+  startedAt           DateTime          @default(now())
+  completedAt         DateTime?
+  correlationId       String
+  categoriesFetched   Int               @default(0)
+  productsFetched     Int               @default(0)
+  productsCreated     Int               @default(0)
+  productsUpdated     Int               @default(0)
+  productsDeactivated Int               @default(0)
+  variantsDeactivated Int               @default(0)
+  /// Short, safe summary only (e.g. an error class name) — never a stack
+  /// trace, never a raw ERP response body. See website-erp-catalog-sync.md §12.
+  errorSummary        String?
+
+  @@index([type, status, startedAt])
+  @@map("catalog_sync_runs")
+}
+
+/// Single-row mutual-exclusion guard (§14) — claimed via an atomic
+/// conditional UPDATE (`isRunning: false -> true`), never a SELECT-then-INSERT
+/// race. Not a distributed lock (no Redis/advisory-lock infra) — a
+/// best-effort, same-database guard sufficient for this phase's MVP sync,
+/// per website-erp-catalog-sync.md §14's own documented scope.
+model CatalogSyncLock {
+  id        String    @id
+  isRunning Boolean   @default(false)
+  lockedAt  DateTime?
+  runId     String?
+
+  @@map("catalog_sync_locks")
 }
 
 // ---------------------------------------------------------------------

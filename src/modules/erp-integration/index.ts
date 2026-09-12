@@ -9,3 +9,12 @@ export {
   ErpUnexpectedResponseError,
 } from "./client";
 export type { ErpRequestInput, ErpRequestResult } from "./client";
+export { erpCatalogAdapter, ErpInvalidResponseError } from "./catalog";
+export type {
+  ErpCatalogVariant,
+  ErpCatalogProduct,
+  ErpCatalogCategory,
+  ListErpProductsParams,
+  ListErpProductsResult,
+  ListErpCategoriesResult,
+} from "./catalog";

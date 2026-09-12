@@ -2,7 +2,7 @@
 
 Audit and design-mapping only — no business code was implemented to produce this document. Every claim below is verified against the real, current source of both repositories as of this phase (ERP `HEAD=bdd3e60`, Website `HEAD=1727a84`), not against prior-phase documentation alone. Where a prior document's claim was checked and found stale, that is called out explicitly.
 
-Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum. Phase 9.3 (ERP Catalog & Inventory Integration API) complete — see §18 addendum. Phase 9.3R (draft/publishing rule correction) complete — see §19 addendum.** Last updated: 2026-09-12.
+Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum. Phase 9.3 (ERP Catalog & Inventory Integration API) complete — see §18 addendum. Phase 9.3R (draft/publishing rule correction) complete — see §19 addendum. Phase 9.4 (Website ERP Catalog Sync) complete — see §20 addendum.** Last updated: 2026-09-12.
 
 ---
 
@@ -535,3 +535,17 @@ Phase 9.3's review found that its draft-exclusion behavior (§18) had drifted fr
 **Correction**: the safe default (excluding `draft` when no `status` filter is given) is unchanged; the hard `400` rejection of an explicit `status=draft` request was removed — the API no longer forecloses a future reconciliation process's ability to ever learn that a product transitioned to `draft`. Full rationale, the ERP-status/Website-visibility/integration-read three-way distinction, the per-field (variant label/media/currency) capability-vs-behavior-vs-classification breakdown, and the reconciliation-gap analysis all now live in `erp-catalog-inventory-api.md` §17 — not duplicated here to avoid the two documents drifting apart again.
 
 This remains **still open**, unchanged: whether draft/unpublished products should ever be visible to the Website (e.g. a future "coming soon" feature) — this phase corrected the API's contract to stop pre-deciding that question, not answered it.
+
+---
+
+## 20. Phase 9.4 addendum — Website ERP Catalog Sync (implemented, catalog only)
+
+Closes the last item §11 flagged as missing: the Website side of the boundary now actually exists. Full design: [`website-erp-catalog-sync.md`](./website-erp-catalog-sync.md). Summary only, here, to avoid the two documents drifting apart (the same discipline §18/§19 already followed).
+
+Built: `erpCatalogAdapter` (typed `listProducts`/`listCategories` on top of Phase 8's unmodified client), a catalog sync service (`runFullSync`/`runIncrementalSync`) with idempotent upserts keyed by stable ERP identifiers, a full-sync deactivation sweep, and a DB-native concurrency guard. **One schema change was required and is documented before being made** (per this phase's own instruction): `Category.erpCategoryId String? @unique`, mirroring `Product.erpProductId`'s pre-existing pattern — ERP's category DTO has no other field the Website could safely match on. Two small additional tables (`CatalogSyncRun`, `CatalogSyncLock`) back observability, the incremental watermark, and the concurrency guard — deliberately minimal, not a sync platform.
+
+**Inventory was not touched** — `Variant.inventoryQuantity` is never written by this code, and the ERP inventory endpoint is never called from it. That remains the next, separately-reviewed phase (see `website-erp-catalog-sync.md` §20 for the explicit boundary).
+
+**Business decisions not resolved, consistent with §4/§9/§17/§19 above**: category hierarchy is dropped (not encoded as "flat" permanently — the Website schema simply has no field for it yet), variant label and category/product slugs use deterministic, non-fabricated ERP-id-based fallbacks pending a real presentation decision, and draft/publishing visibility is untouched (this sync never requests `status=draft`, matching §19's correction rather than reopening it).
+
+**Verification**: 30 new unit tests (mapper + adapter), both EXECUTED and passing; 9 new real-database integration tests, written but SKIPPED in this sandbox (no local Postgres — same disclosed limitation as every other integration test in this repo); full existing suite re-run with no regressions (123 passed/41 skipped, 0 failed); typecheck/lint/build all clean.

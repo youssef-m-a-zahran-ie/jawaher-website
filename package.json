@@ -16,7 +16,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "node prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "catalog-sync:full": "tsx scripts/run-catalog-sync.ts --full",
+    "catalog-sync:incremental": "tsx scripts/run-catalog-sync.ts --incremental"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -45,6 +47,7 @@
     "prettier": "^3.9.6",
     "prisma": "^7.10.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "vitest": "^5.0.0"
   }
