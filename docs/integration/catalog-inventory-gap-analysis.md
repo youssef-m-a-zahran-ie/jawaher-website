@@ -2,7 +2,7 @@
 
 Audit and design-mapping only — no business code was implemented to produce this document. Every claim below is verified against the real, current source of both repositories as of this phase (ERP `HEAD=bdd3e60`, Website `HEAD=1727a84`), not against prior-phase documentation alone. Where a prior document's claim was checked and found stale, that is called out explicitly.
 
-Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum. Phase 9.3 (ERP Catalog & Inventory Integration API) complete — see §18 addendum.** Last updated: 2026-09-12.
+Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum. Phase 9.3 (ERP Catalog & Inventory Integration API) complete — see §18 addendum. Phase 9.3R (draft/publishing rule correction) complete — see §19 addendum.** Last updated: 2026-09-12.
 
 ---
 
@@ -525,3 +525,13 @@ No Website code was touched (confirmed by `git status` on the Website repo showi
 | Website-side tests | — | **Not run — no Website file was touched this phase**, so there was nothing to re-verify there |
 
 Nothing in this addendum is asserted without having been actually executed, per the brief's explicit instruction to distinguish executed/skipped/unavailable — everything above was executed; nothing was skipped or unavailable this phase (no live-database dependency exists in the new code at all, by design, since it's mocked at the Prisma-module level).
+
+---
+
+## 19. Phase 9.3R addendum — draft/publishing rule corrected; contract gaps re-documented
+
+Phase 9.3's review found that its draft-exclusion behavior (§18) had drifted from this document's own §4/§9 classification of "visibility/publishing rules for unpublished products" as an **open business decision** — Phase 9.3 had implemented it as a hard, un-reversible `400`-on-`status=draft` rule instead. Investigation (code + git history) confirmed this was never an existing ERP rule; it was invented during the integration work itself (self-flagged one phase earlier in `erp-integration-implementation-plan.md` §12 as a "technical default... reversible later," not a business-approved rule).
+
+**Correction**: the safe default (excluding `draft` when no `status` filter is given) is unchanged; the hard `400` rejection of an explicit `status=draft` request was removed — the API no longer forecloses a future reconciliation process's ability to ever learn that a product transitioned to `draft`. Full rationale, the ERP-status/Website-visibility/integration-read three-way distinction, the per-field (variant label/media/currency) capability-vs-behavior-vs-classification breakdown, and the reconciliation-gap analysis all now live in `erp-catalog-inventory-api.md` §17 — not duplicated here to avoid the two documents drifting apart again.
+
+This remains **still open**, unchanged: whether draft/unpublished products should ever be visible to the Website (e.g. a future "coming soon" feature) — this phase corrected the API's contract to stop pre-deciding that question, not answered it.

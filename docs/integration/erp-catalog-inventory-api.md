@@ -2,7 +2,7 @@
 
 The ERP-side API boundary the Website will consume in a future, separately-reviewed phase. **Not consumed by the Website yet** — this phase built the ERP side only; no Website sync job, no Website code change, exists as of this document.
 
-Status: Phase 9.3, implemented and tested on the ERP side. Last updated: 2026-09-12.
+Status: Phase 9.3 implemented; **Phase 9.3R (review correction) applied — see §17**. Last updated: 2026-09-12.
 
 ---
 
@@ -47,7 +47,7 @@ Every route calls `verifyWebsiteIntegrationRequest(request)` first, which resolv
 | `limit` | integer, 1-200 | 50 | Safe maximum enforced by Zod; a request for more is a `400`, not silently clamped |
 | `skip` | integer, ≥0 | 0 | Offset pagination — the only pagination style this codebase already has anywhere (`ListProductsFilter`'s existing `skip`/`take`); no cursor scheme was invented |
 | `category` | UUID | — | ERP's own `ProductCategory.id` |
-| `status` | `active` \| `discontinued` \| `archived` | — | **`draft` is rejected with `400 validation_error`** if requested — not merely omitted, actively refused, since draft products must never reach the Website under any request shape (`erp-integration-implementation-plan.md` §3) |
+| `status` | `draft` \| `active` \| `discontinued` \| `archived` | — (see below) | **Corrected in Phase 9.3R — see §17.1.** When omitted, defaults to excluding `draft` (a technical safety default, not a final business decision). `status=draft` MAY now be requested explicitly and returns real draft data — it is no longer hard-rejected with `400`. |
 | `updatedSince` | ISO 8601 datetime | — | Filters on the real `Product.updatedAt` column — incremental-sync support, no new versioning mechanism |
 
 ### `GET /catalog/categories`
@@ -102,6 +102,8 @@ Body: `{ "skus": string[] }` — 1 to 200 entries. `POST`, not `GET`, chosen spe
 | `media` / image references | No reliable ERP representation exists (`FileAsset` has no working `"product_image"` category — confirmed again, `catalog-inventory-gap-analysis.md` §2.5) — per §19 of this phase's brief, not invented |
 | `currency` | **No currency concept exists anywhere in the ERP schema** (confirmed by a full schema grep this phase — zero matches for "currency") — genuinely undetermined, not fabricated. The Website already treats this as its own fixed assumption (EGP), unrelated to ERP (`catalog-inventory-gap-analysis.md` §4) |
 | `brand` | The Website has no brand field/concept at all to receive one (confirmed, `erp-domain-map.md` §2/Phase 6) — nothing to expose it for |
+
+See §17.2 for the structured per-field breakdown (current ERP capability / current API behavior / classification) for variant label, media, and currency specifically, as requested in the Phase 9.3 review.
 
 **Money representation**: `sellingPrice`/`packQuantity` are **decimal strings** (e.g. `"185.0000"`), never JS numbers — preserves ERP's authoritative `Decimal(14,4)` representation exactly, per this phase's explicit §9 instruction ("do not convert money to floating-point numbers"). Converting to the Website's own integer-minor-units representation is left to whichever future adapter consumes this, exactly as already planned (`erp-website-real-mapping.md` §2: "conversion happens once, inside the adapter").
 
@@ -202,3 +204,67 @@ Per §16 of this phase's brief ("if a reusable mechanism already exists, apply i
 ## 16. Future Website sync usage
 
 This API is the ERP-side half of the boundary `erp-integration-implementation-plan.md`/`erp-api-contracts.md` already designed (Phase 7) and `catalog-inventory-gap-analysis.md` (Phase 9.0) confirmed was missing. A future phase (not this one) would build the Website-side `ERPProvider` adapter methods (`getProducts()`, `getInventory()`) calling these exact three endpoints, on a scheduled pull, writing into the Website's existing `Product`/`Variant`/`Category` projection tables — using `updatedSince` for incremental pulls once a full initial sync has run. **Nothing about that future phase was built now** — no Website file was touched, per this phase's own explicit instruction.
+
+---
+
+## 17. Phase 9.3R — review correction (draft/publishing rule + contract-gap documentation)
+
+Phase 9.3 was reviewed and returned with one required correction. This section records what was found, what changed, and what remains genuinely open.
+
+### 17.1 Draft/publishing rule — investigation verdict and correction
+
+Phase 9.0 explicitly classified "visibility/publishing rules for unpublished products" as an **open business decision** (`catalog-inventory-gap-analysis.md` §4/§9). Phase 9.3's original implementation unconditionally excluded `draft` from every read and **hard-rejected** an explicit `status=draft` request with `400`.
+
+**Investigation finding (code + git history, not assumption):** this was **not** an already-established ERP rule. No pre-Phase-9.3 code anywhere in the ERP — not the Products module, not the Shopify sync (which is inbound-only: Shopify → ERP, never the reverse, so there is no existing "what do we export externally" precedent at all), not any permission check — ever gated an external surface on `draft` status. `draft` in the ERP is purely an internal data-entry/workflow starting state (a product "is created as Draft," `product.service.ts`), unrelated to any concept of publishing or customer visibility. The exclusion was introduced in the same Phase 9.3 commit that built the API, and `erp-integration-implementation-plan.md` §12 had already self-classified it one phase earlier as a **"technical default... reversible later,"** not a business-approved rule. **Verdict: Case B — an invented integration policy**, reasonable as an inference but never a real, adopted ERP rule.
+
+**Correction applied (smallest safe change, not a new final rule):**
+
+- The **default** behavor is unchanged and remains safe: a request with no `status` filter still excludes `draft` (`listProductsForWebsiteIntegration`, `product.service.ts`). This is kept as a technical default, explicitly labeled as such in the route's own doc comment — not asserted as a business decision.
+- The **hard `400` rejection of an explicit `status=draft` request was removed.** `draft` is now a valid value for the `status` query parameter (`src/app/api/v1/integrations/website/catalog/products/route.ts`), returning real ERP data — nothing fabricated. This is the part that previously "permanently encoded" an unresolved business decision into the API contract (a categorical, un-reversible "the Website can never learn about draft products through this API, ever") — removing it restores the ability for the still-unbuilt future adapter to make its own decision later, without ERP unilaterally deciding on the business's behalf.
+- Why not: the correction does **not** remove draft records from every read forever, and it does **not** build any new sync/notification mechanism — it simply stops actively blocking a legitimate, explicit, authenticated request for real data that a future reconciliation process would need (§17.3).
+
+### 17.2 Three distinct concepts — do not conflate
+
+| Concept | What it is | Owner |
+|---|---|---|
+| **ERP product status** (`draft`/`active`/`discontinued`/`archived`) | ERP's own internal business lifecycle for a product record — confirmed to have zero existing connection to external visibility before this API existed | ERP |
+| **Website publication/visibility** | Whether a product should be shown to a customer on the storefront at all (and, potentially in future, a "coming soon" preview state for drafts) | **Undecided** — this is the actual open business decision Phase 9.0 flagged, still open |
+| **Integration read behavior** (this API) | What this API returns by default vs. what it permits on explicit request | ERP, but scoped narrowly: a *default* (safe, non-binding) plus an *explicit opt-in* (real data, no gate) — deliberately not an assertion about visibility policy |
+
+The correction in §17.1 exists precisely to keep these three separate: the API no longer pretends that "ERP status = draft" settles "Website visibility" — it now only encodes a safe default for the common case, leaving the actual visibility policy for the Website/business to decide whenever they choose to.
+
+### 17.3 Field-level contract gaps — current capability, current behavior, classification
+
+**Variant Label**
+- *Current ERP capability*: no display-label/name field exists on `ProductVariant` at all — confirmed by schema inspection, unchanged since Phase 9.0 (`catalog-inventory-gap-analysis.md` §4/§9).
+- *Current API behavior*: `sku`, `packQuantity`, and the parent product's `baseUnitCode` are returned as-is; no label is synthesized or guessed by the API.
+- *Why the Website cannot yet rely on it*: any per-variant display string (e.g. "500g", "1kg jar") would have to be derived — either by the ERP inventing a formatting rule it doesn't own, or by a future Website-side convention. Neither exists today.
+- *Classification*: **open business/data-model decision**, unchanged — not resolved by this phase or 9.3R.
+
+**Media**
+- *Current ERP capability*: no reliable image/media representation exists for a product (`FileAsset` has no working `"product_image"` category — confirmed again, `catalog-inventory-gap-analysis.md` §2.5).
+- *Current API behavior*: no media field is returned at all — omitted, not defaulted to a placeholder/empty string/fake URL.
+- *Classification*: **ERP capability gap** — not a business decision to make, a build gap (ERP would need a real media system before this API could expose one). Documented, not invented.
+
+**Currency**
+- *Current ERP capability*: no currency concept exists anywhere in the ERP schema — confirmed again this phase by a full schema grep (zero matches).
+- *Current API behavior*: money fields (`sellingPrice`, `packQuantity`) are returned as bare decimal strings with no accompanying currency code; the API makes no claim about what currency they're denominated in.
+- *Classification*: **open business/data-model decision** — the Website's own current fixed assumption (EGP) is a Website-side convention, not something this API confirms or depends on. If the business ever operates in more than one currency, this gap becomes load-bearing and must be resolved before that happens — flagged, not solved.
+
+### 17.4 Future reconciliation — what the current design allows and what it doesn't
+
+Without implementing any sync mechanism now, per the review's explicit instruction:
+
+- **New product**: detectable. A newly-created `active`/`discontinued`/`archived` product appears in the next default (or `updatedSince`-filtered) pull like any other row.
+- **Updated product** (same status, changed fields): detectable via `updatedSince` — `Product.updatedAt` is real and authoritative.
+- **Product transitioning `active` → `discontinued`/`archived`**: detectable. Both statuses remain inside the default `statusIn` set, so the row still appears in a default or `updatedSince` pull with its new status visible.
+- **Product transitioning to `draft`** (unpublished/pulled back for edits): **NOT detectable via the default pull** — since the default excludes `draft`, a product that moves to `draft` simply stops appearing in the result set, with no signal that it was removed rather than merely unchanged-and-not-returned-this-page. This is a real, documented **future integration gap**: a default-only incremental sync can create/update a local Website record but can never learn, by itself, that the corresponding ERP product was pulled back to draft.
+- **What §17.1's correction enables, without building sync**: because `status=draft` is no longer hard-blocked, a *future* reconciliation process **could** explicitly query `status=draft` (or all four statuses) to build a complete picture, or explicitly re-check a specific product's status. **This capability is documented here as available, not implemented as a mechanism** — no polling job, no webhook, no queue was added. If/when Website sync is built, the sync design will need to explicitly decide how to detect "went missing from the default view" (e.g., always querying all four statuses and diffing locally, or periodically polling `status=draft` for known SKUs) — an open design question for that future phase, not this one.
+
+### 17.5 Security — unchanged, re-confirmed
+
+Authentication, tenant binding (`TenantContext`/`companyId` resolved solely from the connection id, never from client input), read-only boundary, and no-secret-logging are all unmodified by this correction. The new test `"explicit status=draft still respects tenant isolation"` (`catalog/products/route.test.ts`) confirms a draft product belonging to a different company is never returned even when `status=draft` is explicitly requested — tenant isolation applies identically regardless of which status is requested.
+
+### 17.6 Verification
+
+48 tests passed across the four affected files (17 catalog/products — 2 new/changed for this correction, 4 catalog/categories, 13 inventory/availability, 15 warehouse `reservation.service`), plus the full existing suite unaffected (64 tests passed / 38 skipped — the skipped set is the same pre-existing live-Postgres RLS suite, unavailable in this sandbox, unrelated to this change; explicitly not claimed as passing). `npm run check:tenant-scope` (138 files, 0 violations), `npm run typecheck`, `npm run lint`, and `npm run build` all clean.
