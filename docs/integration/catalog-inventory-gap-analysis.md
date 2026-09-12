@@ -2,7 +2,7 @@
 
 Audit and design-mapping only — no business code was implemented to produce this document. Every claim below is verified against the real, current source of both repositories as of this phase (ERP `HEAD=bdd3e60`, Website `HEAD=1727a84`), not against prior-phase documentation alone. Where a prior document's claim was checked and found stale, that is called out explicitly.
 
-Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum.** Last updated: 2026-09-12.
+Status: Phase 9, Step 9.0, complete. **Phase 9.1 (Website Catalog Reconnection) complete — see §16 addendum. Phase 9.2 (ERP Inventory Availability Resolution) complete — see §17 addendum. Phase 9.3 (ERP Catalog & Inventory Integration API) complete — see §18 addendum.** Last updated: 2026-09-12.
 
 ---
 
@@ -477,6 +477,42 @@ No business decision was required to build this fix (it's a pure correctness/dom
 ### 17.8 Future Inventory API readiness
 
 The internal contract this phase establishes (`SellableVariantAvailability` — requested variant, physical source(s), on-hand, reserved, derived available) is exactly what a future Website-facing inventory endpoint should be built on, per `erp-api-contracts.md` §1.2 and `erp-inventory-analysis.md` §7.3 (both already anticipated "the resolution step must happen before the floor-at-zero step" — now a real, tested function, not just a design note). That future endpoint would additionally floor `available` at zero before returning it to the Website (this function deliberately does not, to stay maximally informative internally) and would never expose `sources` (an ERP-internal detail). **Still not built this phase, per its own explicit instruction** — no Website Inventory API, no ERP Catalog API, no sync job.
+
+---
+
+## 18. Phase 9.3 addendum — ERP Catalog & Inventory Integration API (implemented, ERP-side only)
+
+Closes §17.8's own forward pointer and technical gap #11 (§11 above: "no reusable ERP API exists"). **The ERP now exposes the actual API boundary** the Website's future adapter will consume — three endpoints, read-only, built exactly on top of the unmodified §17 `getSellableAvailability()` composition. Full contract documented separately: [`erp-catalog-inventory-api.md`](./erp-catalog-inventory-api.md).
+
+### 18.1 What was built (ERP repo only)
+
+| Endpoint | Method | Backs onto |
+|---|---|---|
+| `/api/v1/integrations/website/catalog/products` | `GET` | `product.service.ts`'s new `listProductsForWebsiteIntegration`, unmodified `productRepo.listProducts` |
+| `/api/v1/integrations/website/catalog/categories` | `GET` | `category.service.ts`'s new `listCategoriesForWebsiteIntegration`, unmodified `categoryRepo.listCategories` |
+| `/api/v1/integrations/website/inventory/availability` | `POST` | new `getSellableAvailabilityBySkus()` — a SKU-keyed wrapper around §17's own, still-unmodified `getSellableAvailability()` |
+
+Reused, not reinvented: Phase 8's `verifyWebsiteIntegrationRequest()` auth, the existing `TenantContext`/ADR-0001 tenant mechanism, and §17's inventory-resolution logic. No schema change, no new dependency, no second auth system (confirmed by `git diff --stat` on both repos — the ERP diff is 5 additively-modified files + 3 new routes + 3 new test files; the Website diff is documentation-only).
+
+### 18.2 Cross-system identity gap resolved: SKU, not internal id
+
+The Website's `Variant` model carries no `erpVariantId` column (confirmed by schema inspection this phase) — SKU is the only shared identifier between the two systems. This forced the inventory endpoint to be SKU-keyed rather than ERP-variant-id-keyed, which in turn required one new repository function, `findVariantsBySkus()` (`product-variant.repository.ts`), to resolve SKU → internal variant id before calling §17's function. Documented here because it's a real, load-bearing integration-shape decision, not an incidental implementation detail.
+
+### 18.3 Fields deliberately not exposed (data-quality gaps, not fabricated)
+
+Per §4/§9 above (variant label, media, currency — all previously flagged as open/missing), this phase did **not** invent values for any of them. `erp-catalog-inventory-api.md` §7 documents each omission and why. None of these gaps were resolved by this phase — they remain open business/data-model decisions, now with a concrete, documented point (the catalog API's product/variant DTOs) where a future decision would need to land.
+
+### 18.4 Rate limiting — deferred, documented as future hardening
+
+No reusable rate-limiting mechanism fit this API's shape without real adaptation work; judged not-otherwise-unsafe without it (read-only, high-entropy credential space, same reasoning already accepted for Phase 8's health endpoint). See `erp-catalog-inventory-api.md` §15 for the full justification. Not implemented — flagged, not silently dropped.
+
+### 18.5 Verification
+
+63/63 ERP tests passing (16 Phase 8 + 15 Phase 9.2 + 32 new this phase — 15 catalog/products, 4 catalog/categories, 13 inventory/availability), `npm run check:tenant-scope` (138 files, 0 violations), `npm run typecheck`, `npm run lint`, `npm run build` all clean. No live-Postgres integration test was needed or written this phase — every new test uses the same module-mock (`vi.mock("@/lib/prisma")`) pattern already established in Phase 8/9.2, with genuine `where`-clause-filtering fakes proving tenant isolation is real rather than assumed.
+
+### 18.6 Still not built (unchanged from §17.8's own caveat)
+
+No Website code was touched (confirmed by `git status` on the Website repo showing zero changes beyond this documentation). No Website ERP-adapter, no sync job, no scheduled pull — that remains the next, separately-reviewed phase.
 
 ### 17.9 Testing (§10/§15 of the brief) — what was actually executed
 
