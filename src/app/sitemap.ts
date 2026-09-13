@@ -1,33 +1,42 @@
 import type { MetadataRoute } from "next";
 
+import { isSampleContent } from "@/lib/content-integrity";
+import { logger } from "@/lib/logger";
 import { SITE_URL } from "@/lib/site-url";
+import { catalogService } from "@/modules/catalog";
 import { CATEGORIES } from "@/ui/commerce/categories";
 
 const POLICY_SLUGS = ["shipping", "returns", "payment", "privacy", "terms"];
 
 /**
- * Deliberately excludes /product/[slug]. Phase 9.1 reconnected these
- * pages to the real, database-backed catalog (src/ui/commerce/mock-products.ts
- * is no longer their data source) — but the seeded content itself is
- * still explicitly labeled placeholder (every name carries a literal
- * " (اسم تجريبي)" suffix, prisma/seed.ts's SAMPLE_SUFFIX). Asking search
- * engines to index and rank pages whose own data admits they're fake
- * would be the same "fake-data-leaking-as-real" problem this project's
- * docs have always forbidden — the backend being real doesn't change
- * that. Add product URLs here once real (non-suffixed) catalog content
- * exists, not merely once a real pipe exists. /account and /search are
- * excluded too (not indexable content pages).
+ * Phase 11R — corrected from Phase 9.1/11's blanket exclusion of every
+ * `/product/[slug]` URL. Public PDPs are canonical, indexable commerce
+ * pages by architecture (`product/[slug]/page.tsx`'s own comment) — a
+ * sitemap should list exactly the pages that ARE indexable, so it now
+ * queries the real catalog and includes each product whose OWN data
+ * isn't still labeled sample content (`isSampleContent`, the same check
+ * `generateMetadata` uses for the per-product `noindex`) — never the
+ * whole route type. This is genuinely new for a sitemap generator (no
+ * DB dependency before this phase): failure degrades to the static
+ * pages only, exactly like the homepage/`/experience` catalog-read
+ * fixes from Phase 10/11 — a sitemap that's temporarily missing products
+ * is far better than a sitemap request that 500s.
  *
- * Phase 11: this sitemap exclusion alone never stopped a crawler reaching
- * a PDP via Shop/Category/Search/Home's own internal links to it — closed
- * with a page-level `robots: {index:false}` on `/product/[slug]` itself
- * (that page's own `generateMetadata`), removed at the same trigger named
- * above.
+ * /account, /checkout, /track, /search remain excluded — not a content-
+ * readiness question, they're private/transactional/utility pages by
+ * nature (`robots.ts` and each page's own `generateMetadata` already
+ * carry the matching `noindex`, kept in sync intentionally).
  */
-export default function sitemap(): MetadataRoute.Sitemap {
+// Same reasoning as /shop's own `dynamic = "force-dynamic"`: a real,
+// changeable product list must never be baked into a build-time static
+// sitemap (confirmed elsewhere the hard way — `npm run build` genuinely
+// queries the database mid-build without this).
+export const dynamic = "force-dynamic";
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
-  return [
+  const staticEntries: MetadataRoute.Sitemap = [
     { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
     { url: `${SITE_URL}/shop`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
     ...CATEGORIES.map((category) => ({
@@ -45,4 +54,21 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.3,
     })),
   ];
+
+  let productEntries: MetadataRoute.Sitemap = [];
+  try {
+    const products = await catalogService.listAllProducts();
+    productEntries = products
+      .filter((product) => !isSampleContent(product.name))
+      .map((product) => ({
+        url: `${SITE_URL}/product/${product.slug}`,
+        lastModified: now,
+        changeFrequency: "weekly" as const,
+        priority: 0.7,
+      }));
+  } catch (err) {
+    logger.warn({ err }, "sitemap: catalog fetch failed — returning static pages only");
+  }
+
+  return [...staticEntries, ...productEntries];
 }

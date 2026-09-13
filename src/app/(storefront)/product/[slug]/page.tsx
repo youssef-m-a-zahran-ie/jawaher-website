@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { isSampleContent } from "@/lib/content-integrity";
 import { formatPrice } from "@/lib/format-price";
 import { breadcrumbJsonLd } from "@/lib/structured-data";
 import { catalogService } from "@/modules/catalog";
@@ -25,13 +26,15 @@ type PageProps = { params: Promise<{ slug: string }> };
  * `npm run build` genuinely queried the real database mid-build without
  * this): a real, changeable catalog must never be baked into a
  * build-time static page — see this phase's brief §12. Product JSON-LD
- * deliberately still NOT
- * added — reconnecting the data path doesn't resolve the actual reason it
- * was withheld (the seeded content itself is still explicitly labeled
- * placeholder — `SAMPLE_SUFFIX`, " (اسم تجريبي)" — emitting structured
- * data asserting real product facts for admittedly-fake content would be
- * exactly the "invented product claim" §8 forbids). Revisit once real
- * catalog content (not just a real pipe) exists.
+ * deliberately still NOT added — reconnecting the data path doesn't
+ * resolve the actual reason it was withheld: `isSampleContent()`
+ * (`src/lib/content-integrity.ts`) still returns true for every seeded
+ * product today, and emitting structured data asserting real product
+ * facts for admittedly-fake content would be exactly the "invented
+ * product claim" prior phases' briefs forbid. Unlike indexability
+ * (`generateMetadata` below), this is a blanket "not built yet" rather
+ * than per-product, since no JSON-LD builder exists to call at all —
+ * add one once real catalog content exists, gated the same way.
  */
 export const dynamic = "force-dynamic";
 
@@ -43,15 +46,17 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     title: product.name,
     description: `${product.name} — ${product.category.name}، جواهر الخير.`,
     alternates: { canonical: `/product/${slug}` },
-    // Phase 11 — closes a real gap sitemap.ts's own exclusion left open:
-    // PDP pages ARE fully linked from Shop/Category/Search/Home grids, so
-    // omitting them from the sitemap alone never stopped a crawler from
-    // discovering and indexing them via those internal links — while the
-    // seeded content still carries the "(اسم تجريبي)" placeholder suffix
-    // (sitemap.ts's own stated reason), that's exactly what should not be
-    // indexed. Remove this once real, non-suffixed catalog content exists
-    // (the same trigger sitemap.ts's own comment already names).
-    robots: { index: false, follow: true },
+    // Phase 11R — corrected from Phase 11's blanket `robots: {index:false}`
+    // on every PDP. Public Product Detail Pages are canonical, indexable
+    // commerce pages by architecture (see this page's own comment below
+    // and sitemap.ts) — there is no business requirement to keep real
+    // products out of search. The only thing actually disqualifying a
+    // page from indexing today is that ITS OWN data is still honestly
+    // labeled sample content (`isSampleContent`) — checked per product,
+    // not applied to the whole route. A real product (no marker) is
+    // indexable the moment it exists; nothing here needs to change when
+    // that happens.
+    ...(isSampleContent(product.name) ? { robots: { index: false, follow: true } } : {}),
   };
 }
 
