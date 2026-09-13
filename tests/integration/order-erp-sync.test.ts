@@ -38,6 +38,11 @@ function stubErpFetch(handler: (path: string, method: string, body: unknown) => 
   );
 }
 
+/** Same helper as erp-inventory-checkout.test.ts's own — a bare 500 with no parseable body, simulating ERP being reachable-but-erroring. */
+function stubErpUnavailable() {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 500 })));
+}
+
 async function setUpConfirmedOrder(erpVariantId: string | undefined, quantity = 5, priceEgp = 100) {
   const { category, variant } = await createTestVariant({ quantity, priceEgp, erpVariantId });
   const zone = await createTestShippingZone({ feeEgp: 60 });
@@ -294,6 +299,60 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
     const { ordersService } = await import("@/modules/orders");
     const cancelled = await ordersService.cancelOrder(order.orderId, { sessionId: session.id, customerId: null }, "customer_requested");
     expect(cancelled.status).toBe("CANCELLED");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Phase 12 — `retryFailedErpPushes` is the previously-missing sweep:
+   * `pushOrderToErp` was always documented as safe to call from one, but
+   * nothing ever did. These pin the two behaviors that matter most: a
+   * transiently-failed push actually recovers once ERP is reachable
+   * again, and a locally-cancelled order is never resurrected and pushed
+   * as if it were still active.
+   */
+  it("RETRY SWEEP: a FAILED push recovers once ERP becomes reachable, and is excluded once SUCCEEDED", async () => {
+    mockErpEnv();
+    const erpVariantId = `erp-v-${randomUUID()}`;
+    stubErpUnavailable();
+
+    const { category, session, order } = await setUpConfirmedOrder(erpVariantId);
+    categoryIds.push(category.id);
+    sessionIds.push(session.id);
+
+    const { pushOrderToErp, retryFailedErpPushes } = await import("@/modules/orders");
+    await pushOrderToErp(order.orderId);
+    const { db } = await import("@/lib/db");
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.orderId } })).erpPushStatus).toBe("FAILED");
+
+    stubErpFetch((path) => {
+      if (path.endsWith("/orders")) return { status: 200, body: { erpOrderReference: "erp-order-recovered", primaryStatus: "pending_validation", deduplicated: false } };
+      return { status: 404, body: {} };
+    });
+
+    const firstSweep = await retryFailedErpPushes();
+    expect(firstSweep).toEqual({ attempted: 1, succeeded: 1, stillFailed: 0 });
+    expect((await db.order.findUniqueOrThrow({ where: { id: order.orderId } })).erpPushStatus).toBe("SUCCEEDED");
+
+    const secondSweep = await retryFailedErpPushes();
+    expect(secondSweep).toEqual({ attempted: 0, succeeded: 0, stillFailed: 0 }); // already SUCCEEDED — not picked up again
+  });
+
+  it("RETRY SWEEP: never pushes an order the customer already cancelled locally", async () => {
+    mockErpEnv();
+    stubErpUnavailable();
+
+    const { category, session, order } = await setUpConfirmedOrder(`erp-v-${randomUUID()}`);
+    categoryIds.push(category.id);
+    sessionIds.push(session.id);
+
+    const { pushOrderToErp, retryFailedErpPushes, ordersService } = await import("@/modules/orders");
+    await pushOrderToErp(order.orderId); // fails, erpPushStatus stays FAILED
+    await ordersService.cancelOrder(order.orderId, { sessionId: session.id, customerId: null }, "customer_requested");
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const sweep = await retryFailedErpPushes();
+    expect(sweep).toEqual({ attempted: 0, succeeded: 0, stillFailed: 0 });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

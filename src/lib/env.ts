@@ -57,7 +57,15 @@ const envSchema = z.object({
   ERP_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 
   // --- Reserved for later phases (optional until implemented) ---
-  SESSION_SECRET: z.string().min(1).optional(),
+  // SESSION_SECRET intentionally removed here (Phase 12 environment
+  // audit): src/lib/session.ts's own comment is explicit that sessions
+  // are an opaque, database-looked-up id — "never a JWT with embedded
+  // claims" — a deliberate architectural choice, not a placeholder
+  // waiting to be filled in. That design has nothing to sign or verify,
+  // so a signing secret would never have a real use; keeping it listed
+  // as "reserved" was stale, misleading documentation suggesting a
+  // direction (stateless/signed sessions) this project already decided
+  // against.
   OTP_PROVIDER_API_KEY: z.string().min(1).optional(),
   PAYMENT_PROVIDER_API_KEY: z.string().min(1).optional(),
   SHIPPING_PROVIDER_API_KEY: z.string().min(1).optional(),

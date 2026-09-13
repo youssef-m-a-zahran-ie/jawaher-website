@@ -70,6 +70,45 @@ export async function getAvailableQuantity(client: Db, variantId: string): Promi
 }
 
 /**
+ * Phase 12 — the batched sibling of `getAvailableQuantity`, for rendering
+ * a LISTING of many variants (Shop/Category/Search) rather than one
+ * purchase-decision read. A real N+1 was found and fixed here: every
+ * catalog listing page previously called `getAvailableQuantity` once per
+ * variant, and that function itself re-fetches the variant row from the
+ * database even when the caller (a listing query that already selected
+ * every scalar column, `inventoryQuantity` included) already has it in
+ * hand — for a page of N products with V variants each, that was
+ * `N*V*2` avoidable round trips on every request (these listing routes
+ * are all `force-dynamic`, so this ran fresh every time, not just at
+ * build). This does exactly one `groupBy` query for however many variants
+ * are being displayed, regardless of how many there are, and the caller
+ * supplies the `inventoryQuantity` it already loaded instead of asking
+ * this function to re-fetch it.
+ *
+ * Deliberately a SEPARATE function rather than changing
+ * `getAvailableQuantity`'s own signature: that function's callers
+ * (checkout, `getVariantForPurchase`) are purchase-decision reads that
+ * must fetch the current row themselves, not reuse a value the caller
+ * loaded earlier in the request — those two consistency requirements are
+ * genuinely different and must not be conflated into one function.
+ */
+export async function getAvailableQuantitiesForVariants(
+  client: Db,
+  variants: { id: string; inventoryQuantity: number }[],
+): Promise<Map<string, number>> {
+  if (variants.length === 0) return new Map();
+
+  const reservations = await client.inventoryReservation.groupBy({
+    by: ["variantId"],
+    where: { variantId: { in: variants.map((v) => v.id) }, status: "ACTIVE" },
+    _sum: { quantity: true },
+  });
+  const reservedByVariantId = new Map(reservations.map((r) => [r.variantId, r._sum.quantity ?? 0]));
+
+  return new Map(variants.map((v) => [v.id, v.inventoryQuantity - (reservedByVariantId.get(v.id) ?? 0)]));
+}
+
+/**
  * Reserves each requested item or reserves none of them — never a partial
  * reservation. Must be called with a transaction client so the row lock
  * and the availability check are atomic with the insert; the caller (the

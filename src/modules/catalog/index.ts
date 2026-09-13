@@ -3,6 +3,7 @@ export type { ProductView, VariantView } from "@/modules/catalog/service";
 export {
   deriveAvailability,
   getAvailableQuantity,
+  getAvailableQuantitiesForVariants,
   reserveInventoryForItems,
   releaseReservationsForCheckoutSession,
   consumeReservationsForCheckoutSession,

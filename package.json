@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
     "db:seed": "node prisma/seed.ts",
     "db:studio": "prisma studio",
     "catalog-sync:full": "tsx scripts/run-catalog-sync.ts --full",

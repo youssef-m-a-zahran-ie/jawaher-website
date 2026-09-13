@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { catalogService } from "@/modules/catalog";
 import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { isDatabaseAvailable } from "./helpers/db-availability";
+import { cleanupTestData, createTestSessionAndCart } from "./helpers/fixtures";
 
 /**
  * Phase 9.1 — proves the real data path the storefront pages (/shop,
@@ -20,8 +21,13 @@ const dbAvailable = await isDatabaseAvailable();
 describe.skipIf(!dbAvailable)("catalog storefront reconnection", () => {
   const runId = randomUUID().slice(0, 8);
   const categoryIds: string[] = [];
+  const sessionIds: string[] = [];
 
   afterAll(async () => {
+    // sessionIds first — cleanupTestData deletes each session's cart's
+    // checkoutSessions/reservations before the category loop below tries
+    // to delete the variants those reservations reference.
+    await cleanupTestData({ sessionIds });
     for (const categoryId of categoryIds) {
       const products = await db.product.findMany({ where: { categoryId } });
       for (const product of products) {
@@ -115,5 +121,39 @@ describe.skipIf(!dbAvailable)("catalog storefront reconnection", () => {
     const cards = toProductCardDataList(await catalogService.listAllProducts());
     const card = cards.find((c) => c.name === `منتج اختبار ${runId}`);
     expect(card?.price.amountMinor).toBe(18500);
+  });
+
+  /**
+   * Phase 12 — pins the batched N+1 fix (catalog/service.ts's
+   * `buildAvailabilityMap`, inventory.ts's `getAvailableQuantitiesForVariants`):
+   * a LISTING (not just the PDP, which already had its own ERP overlay
+   * test elsewhere) must still correctly subtract an active reservation
+   * from the raw `inventoryQuantity` column — the exact number the old,
+   * removed per-variant `getAvailableQuantity` call used to compute.
+   */
+  it("a listing reflects reduced availability from a real active reservation, not the raw inventoryQuantity column", async () => {
+    const { category, product, variant } = await seedOneProduct({ inventoryQuantity: 10 });
+    const { session, cart } = await createTestSessionAndCart();
+    sessionIds.push(session.id);
+    const checkoutSession = await db.checkoutSession.create({
+      data: { cartId: cart.id, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
+    });
+    await db.inventoryReservation.create({
+      data: {
+        variantId: variant.id,
+        checkoutSessionId: checkoutSession.id,
+        quantity: 7,
+        status: "ACTIVE",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+
+    const listed = await catalogService.listAllProducts();
+    const found = listed.find((p) => p.id === product.id);
+    // 10 on hand - 7 actively reserved = 3 available -> "low_stock" (<= LOW_STOCK_THRESHOLD of 5), never "in_stock".
+    expect(found?.variants[0]?.availability).toBe("low_stock");
+
+    const byCategory = await catalogService.listProductsByCategory(category.slug);
+    expect(byCategory.find((p) => p.id === product.id)?.variants[0]?.availability).toBe("low_stock");
   });
 });

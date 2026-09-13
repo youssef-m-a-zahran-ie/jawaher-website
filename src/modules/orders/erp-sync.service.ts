@@ -138,3 +138,41 @@ export async function pushOrderToErp(orderId: string): Promise<void> {
     // outcome should re-read `Order.erpPushStatus` after calling this.
   }
 }
+
+/**
+ * Phase 12 — this function's sibling `pushOrderToErp` above was always
+ * documented as "safe to call on every retry/cron sweep" (its own comment,
+ * unchanged since Phase 9.6), but nothing in the codebase ever actually
+ * called it a second time — a real, previously-open gap: an order whose
+ * initial push fails (ERP down, network blip, a transient rejection) stayed
+ * `FAILED` forever with no mechanism, automatic or manual, to retry it
+ * short of a one-off database edit. Mirrors the exact established pattern
+ * `expireStaleReservations`/its internal route already use (an idempotent,
+ * bounded sweep function, invoked by an external scheduler hitting a
+ * shared-secret-protected internal endpoint — no queue, no new
+ * infrastructure).
+ *
+ * Excludes cancelled orders deliberately: an order the customer (or ERP)
+ * already cancelled locally before its first push ever succeeded must
+ * never be pushed to ERP now as if it were still an active, fresh order.
+ * `limit` bounds one sweep call's work so a large backlog can't make a
+ * single scheduled invocation run unboundedly long — call it more
+ * frequently instead of raising this, if a backlog ever builds up.
+ */
+export async function retryFailedErpPushes(limit = 25): Promise<{ attempted: number; succeeded: number; stillFailed: number }> {
+  const stuck = await db.order.findMany({
+    where: { status: "CONFIRMED", erpPushStatus: { in: ["FAILED", "PENDING"] } },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+
+  let succeeded = 0;
+  for (const order of stuck) {
+    await pushOrderToErp(order.id);
+    const after = await db.order.findUniqueOrThrow({ where: { id: order.id }, select: { erpPushStatus: true } });
+    if (after.erpPushStatus === "SUCCEEDED") succeeded += 1;
+  }
+
+  return { attempted: stuck.length, succeeded, stillFailed: stuck.length - succeeded };
+}

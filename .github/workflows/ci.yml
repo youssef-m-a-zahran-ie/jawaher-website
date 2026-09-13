@@ -51,13 +51,16 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # No committed migration exists yet (schema.prisma was authored and
-      # validated without a reachable local Postgres to generate one
-      # against — see docs/architecture/technical-decisions.md's Phase 4
-      # section). `db push` applies the schema directly to this job's fresh
-      # container, which is exactly what a from-scratch CI database needs.
-      - name: Push database schema
-        run: npx prisma db push
+      # Phase 12 — a real initial migration now exists
+      # (prisma/migrations/*_init), generated via `prisma migrate diff
+      # --from-empty --to-schema` (no live database needed to generate it —
+      # see docs/architecture/production-readiness.md). CI now runs the same
+      # `migrate deploy` a real production deployment would, against a
+      # from-scratch database, instead of `db push` (a dev-only command
+      # that bypasses migration history and would never have caught a
+      # migration that fails to apply).
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
 
       - name: Seed database (verifies prisma/seed.ts against a real Postgres)
         run: npm run db:seed

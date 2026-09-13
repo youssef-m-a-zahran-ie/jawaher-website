@@ -1,6 +1,12 @@
 import { Money } from "@/domain/money";
 import { catalogRepository, type CatalogProductRow, type CatalogVariantRow } from "@/modules/catalog/repository";
-import { deriveAvailability, getAvailableQuantity, fetchErpAvailability, type AvailabilityState } from "@/modules/catalog/inventory";
+import {
+  deriveAvailability,
+  getAvailableQuantity,
+  getAvailableQuantitiesForVariants,
+  fetchErpAvailability,
+  type AvailabilityState,
+} from "@/modules/catalog/inventory";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 
@@ -48,18 +54,21 @@ export const catalogService = {
   async getProduct(slug: string): Promise<ProductView | null> {
     const row = await catalogRepository.findProductBySlugWithVariants(slug);
     if (!row || row.status !== "ACTIVE") return null;
-    const product = await mapProduct(row);
+    const availability = await buildAvailabilityMap([row]);
+    const product = mapProduct(row, availability);
     return applyErpAvailabilityOverlay(product, row.variants);
   },
 
   async listProductsByCategory(categorySlug: string): Promise<ProductView[]> {
     const rows = await catalogRepository.listActiveProductsByCategorySlug(categorySlug);
-    return Promise.all(rows.map(mapProduct));
+    const availability = await buildAvailabilityMap(rows);
+    return rows.map((row) => mapProduct(row, availability));
   },
 
   async listAllProducts(): Promise<ProductView[]> {
     const rows = await catalogRepository.listAllActiveProducts();
-    return Promise.all(rows.map(mapProduct));
+    const availability = await buildAvailabilityMap(rows);
+    return rows.map((row) => mapProduct(row, availability));
   },
 
   /** Phase 9.1 — backs the /search page against real data; see repository.ts's own comment on match fields/scope. */
@@ -67,7 +76,8 @@ export const catalogService = {
     const trimmed = query.trim();
     if (!trimmed) return [];
     const rows = await catalogRepository.searchActiveProducts(trimmed);
-    return Promise.all(rows.map(mapProduct));
+    const availability = await buildAvailabilityMap(rows);
+    return rows.map((row) => mapProduct(row, availability));
   },
 
   /**
@@ -151,8 +161,21 @@ async function applyErpAvailabilityOverlay(
   };
 }
 
-async function mapProduct(row: CatalogProductRow): Promise<ProductView> {
-  const variants = await Promise.all(row.variants.map(mapVariant));
+/**
+ * Phase 12 — one batched query for every variant across however many
+ * product rows are being rendered, instead of `mapVariant` calling
+ * `getAvailableQuantity` (its own DB round trip) per variant — see that
+ * function's own comment in inventory.ts for the full N+1 finding. Every
+ * row here already carries `inventoryQuantity` (the repository's
+ * `include: { variants: ... }` selects full scalar columns), so this
+ * needs only the reservation side, batched.
+ */
+async function buildAvailabilityMap(rows: CatalogProductRow[]): Promise<Map<string, number>> {
+  const variants = rows.flatMap((row) => row.variants.map((v) => ({ id: v.id, inventoryQuantity: v.inventoryQuantity })));
+  return getAvailableQuantitiesForVariants(db, variants);
+}
+
+function mapProduct(row: CatalogProductRow, availability: Map<string, number>): ProductView {
   return {
     id: row.id,
     slug: row.slug,
@@ -160,12 +183,16 @@ async function mapProduct(row: CatalogProductRow): Promise<ProductView> {
     description: row.description,
     category: { slug: row.category.slug, name: row.category.name },
     hasMultipleVariants: row.variants.length > 1,
-    variants,
+    variants: row.variants.map((variant) => mapVariant(variant, availability)),
   };
 }
 
-async function mapVariant(row: CatalogVariantRow): Promise<VariantView> {
-  const available = await getAvailableQuantity(db, row.id);
+function mapVariant(row: CatalogVariantRow, availability: Map<string, number>): VariantView {
+  // Falls back to a fresh per-variant read only if the batch map is
+  // somehow missing this id (defensive — it never should be, since the
+  // map is always built from these exact same rows) rather than silently
+  // treating an unknown variant as available.
+  const available = availability.get(row.id) ?? 0;
   return {
     id: row.id,
     sku: row.sku,
