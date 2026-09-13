@@ -3,6 +3,7 @@ import { z } from "zod";
 import { apiError, apiSuccess, parseOrError } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
 import { checkoutService } from "@/modules/checkout";
+import { pushOrderToErp } from "@/modules/orders";
 
 const bodySchema = z.object({
   checkoutSessionId: z.string().uuid(),
@@ -30,6 +31,17 @@ export async function POST(request: Request) {
       method: parsed.data.method,
       idempotencyKey,
     });
+
+    // Deliberately a SEPARATE step, after the Website's own transaction
+    // has already committed (never inside it — see erp-sync.service.ts's
+    // own header comment). Never throws and never blocks the customer
+    // from seeing their order as placed: the Website's commercial
+    // commitment is already complete and authoritative by this point
+    // (docs/architecture/data-ownership.md's approved lifecycle);
+    // `Order.erpPushStatus` tracks the outcome for retry/observability
+    // rather than surfacing a failure here.
+    await pushOrderToErp(order.orderId);
+
     return apiSuccess({ order });
   } catch (error) {
     return mapDomainErrorToApiResponse(error);

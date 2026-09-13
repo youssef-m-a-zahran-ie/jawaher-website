@@ -59,8 +59,21 @@ export class ErpAuthenticationError extends Error {
 }
 
 export class ErpUnexpectedResponseError extends Error {
-  constructor(public readonly requestId: string, public readonly status: number) {
-    super(`ERP returned an unexpected response (status=${status}, requestId=${requestId}).`);
+  constructor(
+    public readonly requestId: string,
+    public readonly status: number,
+    /**
+     * ERP's own structured error code/message (integration-http.ts's
+     * `IntegrationErrorBody`), when the response body was parseable —
+     * Phase 9.6's first caller (order push) needs this to distinguish a
+     * `business_rule_violation` (a real, explainable rejection) from a
+     * genuinely unexpected failure. `undefined` for every existing
+     * caller's non-JSON/unparseable error responses, unchanged.
+     */
+    public readonly erpErrorCode?: string,
+    public readonly erpErrorMessage?: string,
+  ) {
+    super(`ERP returned an unexpected response (status=${status}, requestId=${requestId}${erpErrorCode ? `, code=${erpErrorCode}` : ""}).`);
     this.name = "ErpUnexpectedResponseError";
   }
 }
@@ -127,7 +140,11 @@ export async function callErpIntegrationApi<T = unknown>(input: ErpRequestInput)
     throw new ErpAuthenticationError(requestId);
   }
   if (!response.ok) {
-    throw new ErpUnexpectedResponseError(requestId, response.status);
+    const errorBody = await response
+      .clone()
+      .json()
+      .catch(() => null) as { error?: { code?: string; message?: string } } | null;
+    throw new ErpUnexpectedResponseError(requestId, response.status, errorBody?.error?.code, errorBody?.error?.message);
   }
 
   const data = (await response.json()) as T;

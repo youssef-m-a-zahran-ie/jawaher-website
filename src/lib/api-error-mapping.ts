@@ -7,6 +7,7 @@ import { CartItemUnavailableError } from "@/modules/cart";
 import { InsufficientInventoryError } from "@/modules/catalog";
 import { CheckoutValidationError, CouponRejectedError } from "@/modules/checkout";
 import { OrderAuthorizationError, OrderNotFoundError } from "@/modules/orders";
+import { ErpOrderRejectedError } from "@/modules/erp-integration";
 import { OtpInvalidError, OtpRateLimitedError } from "@/modules/customers";
 import { OnlinePaymentNotConfiguredError } from "@/modules/payments";
 import type { NextResponse } from "next/server";
@@ -59,6 +60,11 @@ export function mapDomainErrorToApiResponse(error: unknown): NextResponse<ApiErr
   if (error instanceof OrderNotFoundError || error instanceof OrderAuthorizationError) {
     // Never reveal that an order exists but belongs to someone else — technical-architecture.md §22's authorization row.
     return apiError("not_found", "order_not_found", "لم يتم العثور على الطلب.");
+  }
+
+  if (error instanceof ErpOrderRejectedError) {
+    // ERP's own real business rule blocked the cancellation (e.g. payment already allocated, already out for delivery) — surfaced honestly, never silently treated as a successful local cancellation.
+    return apiError("business_rule", "order_cancellation_rejected", "لا يمكن إلغاء هذا الطلب الآن — قد يكون قيد التجهيز بالفعل أو تم تحصيل دفعة عليه.");
   }
 
   if (error instanceof OtpRateLimitedError) {

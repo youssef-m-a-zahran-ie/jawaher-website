@@ -20,3 +20,5 @@ export type {
 } from "./catalog";
 export { erpInventoryAdapter, ErpInvalidInventoryResponseError } from "./inventory";
 export type { ErpAvailabilityResult } from "./inventory";
+export { erpOrderAdapter, ErpInvalidOrderResponseError, ErpOrderRejectedError } from "./orders";
+export type { PushOrderPayload, PushOrderLine, PushOrderResult, ErpOrderStatus } from "./orders";
