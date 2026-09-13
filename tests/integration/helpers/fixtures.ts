@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 
 /** Creates a throwaway category/product/variant for one test — prefixed so cleanup can find everything by run id. */
-export async function createTestVariant(overrides: { priceEgp?: number; quantity?: number } = {}) {
+export async function createTestVariant(overrides: { priceEgp?: number; quantity?: number; erpVariantId?: string } = {}) {
   const runId = randomUUID().slice(0, 8);
   const category = await db.category.create({
     data: { slug: `test-cat-${runId}`, name: `فئة اختبار ${runId}` },
@@ -15,6 +15,7 @@ export async function createTestVariant(overrides: { priceEgp?: number; quantity
     data: {
       productId: product.id,
       sku: `TEST-SKU-${runId}`,
+      erpVariantId: overrides.erpVariantId,
       label: "اختبار",
       priceAmountMinor: Math.round((overrides.priceEgp ?? 100) * 100),
       inventoryQuantity: overrides.quantity ?? 10,

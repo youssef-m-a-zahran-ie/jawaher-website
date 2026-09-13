@@ -10,6 +10,8 @@ import {
   reserveInventoryForItems,
   releaseReservationsForCheckoutSession,
   consumeReservationsForCheckoutSession,
+  fetchErpAvailability,
+  InsufficientInventoryError,
 } from "@/modules/catalog";
 import { promotionsService, CouponRejectedError } from "@/modules/promotions";
 import { shippingService } from "@/modules/shipping";
@@ -116,6 +118,42 @@ export const checkoutService = {
     checkoutSessionId: string,
     params: { method: "COD" | "ONLINE"; idempotencyKey: string },
   ): Promise<OrderSummary> {
+    // ERP availability pre-check — deliberately OUTSIDE the transaction
+    // below (a live HTTP call must never happen while a DB row lock is
+    // held; the local reservation's own row lock is acquired only inside
+    // the transaction, by reserveInventoryForItems). This is the
+    // highest-stakes moment in the whole flow (a real Order + Payment are
+    // about to be created), so per this phase's own explicit policy
+    // (docs/integration/inventory-integration-audit.md §16) it fails
+    // CLOSED on any ERP failure, rather than falling back to stale local
+    // data the way cart mutation does. Narrows, but does not eliminate,
+    // the ERP/Website time-of-check-to-time-of-use race (audit §8/§12) —
+    // full elimination needs a future ERP reservation/commit API that
+    // does not exist today (audit §17).
+    const preCheckSession = await db.checkoutSession.findUniqueOrThrow({
+      where: { id: checkoutSessionId },
+      include: { cart: { include: { items: { include: { variant: true } } } } },
+    });
+    const { failed, availableById } = await fetchErpAvailability(
+      preCheckSession.cart.items.map((item) => ({
+        id: item.variant.id,
+        sku: item.variant.sku,
+        erpVariantId: item.variant.erpVariantId,
+      })),
+    );
+    if (failed) {
+      throw new CheckoutValidationError("availability_check_unavailable");
+    }
+    const insufficient = preCheckSession.cart.items
+      .filter((item) => {
+        const erpAvailable = availableById.get(item.variant.id);
+        return erpAvailable !== undefined && erpAvailable < item.quantity;
+      })
+      .map((item) => item.variantId);
+    if (insufficient.length > 0) {
+      throw new InsufficientInventoryError(insufficient);
+    }
+
     return db.$transaction(async (tx) => {
       const claim = await claimIdempotencyKey<OrderSummary>(tx, "checkout.confirmAndPlaceOrder", params.idempotencyKey);
       if (claim.alreadyCompleted) return claim.response;

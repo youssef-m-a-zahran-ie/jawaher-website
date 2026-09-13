@@ -1,5 +1,13 @@
 export class CheckoutValidationError extends Error {
-  constructor(readonly reason: "address_missing" | "shipping_missing" | "cart_empty" | "unserviceable_address") {
+  constructor(
+    readonly reason:
+      | "address_missing"
+      | "shipping_missing"
+      | "cart_empty"
+      | "unserviceable_address"
+      /** ERP (the inventory authority) could not be reached at order-confirmation time — fails closed rather than committing on stale/absent data. See docs/integration/inventory-integration-audit.md §16. */
+      | "availability_check_unavailable",
+  ) {
     super(`Checkout validation failed: ${reason}`);
     this.name = "CheckoutValidationError";
   }

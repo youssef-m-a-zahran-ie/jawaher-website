@@ -73,6 +73,43 @@ describe("callErpIntegrationApi", () => {
     expect(result.requestId).toBe("rid-1");
   });
 
+  it("sends a JSON body with a Content-Type header when one is provided (Phase 9.5 — first POST-with-body caller)", async () => {
+    let capturedInit: RequestInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        capturedInit = init;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      })
+    );
+    const { callErpIntegrationApi } = await loadClientWithEnv({});
+
+    await callErpIntegrationApi({ path: "/x", method: "POST", body: { skus: ["A", "B"] } });
+
+    expect(capturedInit?.method).toBe("POST");
+    expect(capturedInit?.body).toBe(JSON.stringify({ skus: ["A", "B"] }));
+    const headers = new Headers(capturedInit?.headers);
+    expect(headers.get("content-type")).toBe("application/json");
+  });
+
+  it("sends no body and no Content-Type header when body is omitted (existing GET callers unaffected)", async () => {
+    let capturedInit: RequestInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        capturedInit = init;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      })
+    );
+    const { callErpIntegrationApi } = await loadClientWithEnv({});
+
+    await callErpIntegrationApi({ path: "/x" });
+
+    expect(capturedInit?.body).toBeUndefined();
+    const headers = new Headers(capturedInit?.headers);
+    expect(headers.has("content-type")).toBe(false);
+  });
+
   it("mints a fresh request id when none is provided and propagates it in the result", async () => {
     vi.stubGlobal(
       "fetch",

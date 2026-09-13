@@ -70,6 +70,13 @@ export interface ErpRequestInput {
   method?: "GET" | "POST";
   requestId?: string;
   timeoutMs?: number;
+  /**
+   * JSON-serializable request body — Phase 9.5's first caller (the
+   * inventory adapter's `POST inventory/availability`). Optional and
+   * additive: every existing GET-only caller (the catalog adapter) is
+   * unaffected, since this is never set for them.
+   */
+  body?: unknown;
 }
 
 export interface ErpRequestResult<T = unknown> {
@@ -102,7 +109,9 @@ export async function callErpIntegrationApi<T = unknown>(input: ErpRequestInput)
         Authorization: `Bearer ${env.ERP_API_KEY}`,
         [CONNECTION_ID_HEADER]: env.ERP_CONNECTION_ID,
         [REQUEST_ID_HEADER]: requestId,
+        ...(input.body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
+      body: input.body !== undefined ? JSON.stringify(input.body) : undefined,
       signal: controller.signal,
     });
   } catch (err) {

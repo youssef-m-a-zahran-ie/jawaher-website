@@ -51,6 +51,7 @@ export function mapDomainErrorToApiResponse(error: unknown): NextResponse<ApiErr
       shipping_missing: "برجاء اختيار طريقة الشحن أولًا.",
       cart_empty: "السلة فارغة.",
       unserviceable_address: "التوصيل غير متاح لهذا العنوان حاليًا.",
+      availability_check_unavailable: "تعذّر التحقق من توفر المنتجات حاليًا، برجاء المحاولة مرة أخرى بعد قليل.",
     };
     return apiError("business_rule", error.reason, messages[error.reason]);
   }

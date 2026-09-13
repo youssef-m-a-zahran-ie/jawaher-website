@@ -2,6 +2,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
+import { logger } from "@/lib/logger";
+import { erpInventoryAdapter } from "@/modules/erp-integration";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -141,4 +143,52 @@ export async function expireStaleReservations(client: PrismaClient = db): Promis
     data: { status: "EXPIRED", releasedAt: new Date() },
   });
   return result.count;
+}
+
+/**
+ * ============================================================================
+ * ERP-AWARE AVAILABILITY — Phase 9.5
+ * ============================================================================
+ * ERP is the authoritative inventory source (see
+ * docs/integration/inventory-integration-audit.md). This project's own
+ * `InventoryReservation`/`inventoryQuantity` above remain UNCHANGED and
+ * continue to guard against two simultaneous Website checkouts racing
+ * for the same (Website-local) unit — they are reclassified, not
+ * replaced, as a non-authoritative same-repo concurrency guard (audit
+ * §7/§15). What follows adds a live ERP read on top, combined per the
+ * audit's explicit, asymmetric fallback policy (§16):
+ *   - a variant with no `erpVariantId` was never expected to have an ERP
+ *     opinion — never a failure, always falls back silently (but logged
+ *     at the caller's discretion).
+ *   - a variant WITH an `erpVariantId` whose ERP check fails (timeout/
+ *     unavailable/malformed) IS reported as a failure (`failed: true`) —
+ *     callers decide what to do with that per their own stakes (see
+ *     `getVariantForPurchase` in service.ts vs. checkout's pre-check).
+ * ============================================================================
+ */
+
+export type ErpVariantForAvailability = { id: string; sku: string; erpVariantId: string | null };
+
+/**
+ * Batched: a cart or a checkout's line count is always small, so this is
+ * always at most one ERP call (the adapter itself sub-batches beyond its
+ * own per-request SKU limit, which no realistic cart/checkout approaches).
+ * Keyed by the Website's own variant `id` — never by `sku` (see
+ * erp-integration/inventory.ts's own header comment on why).
+ */
+export async function fetchErpAvailability(
+  variants: ErpVariantForAvailability[]
+): Promise<{ availableById: Map<string, number>; failed: boolean }> {
+  const checkable = variants.filter((v) => v.erpVariantId !== null);
+  if (checkable.length === 0) return { availableById: new Map(), failed: false };
+
+  try {
+    const { availableById } = await erpInventoryAdapter.getAvailability(
+      checkable.map((v) => ({ id: v.id, sku: v.sku }))
+    );
+    return { availableById, failed: false };
+  } catch (err) {
+    logger.warn({ err, variantIds: checkable.map((v) => v.id) }, "erp-inventory: availability check failed — falling back per caller's own policy");
+    return { availableById: new Map(), failed: true };
+  }
 }

@@ -1,7 +1,8 @@
 import { Money } from "@/domain/money";
 import { catalogRepository, type CatalogProductRow, type CatalogVariantRow } from "@/modules/catalog/repository";
-import { deriveAvailability, getAvailableQuantity, type AvailabilityState } from "@/modules/catalog/inventory";
+import { deriveAvailability, getAvailableQuantity, fetchErpAvailability, type AvailabilityState } from "@/modules/catalog/inventory";
 import { db } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 export type VariantView = {
   id: string;
@@ -57,11 +58,29 @@ export const catalogService = {
     return Promise.all(rows.map(mapProduct));
   },
 
-  /** Used by Cart/Checkout to re-validate a line item against live data — never trust a client-supplied price/availability. */
+  /**
+   * Used by Cart to re-validate a line item against live data — never
+   * trust a client-supplied price/availability. Takes the MINIMUM of the
+   * Website-local number and a live ERP read (Phase 9.5) — ERP is the
+   * inventory authority (docs/integration/inventory-integration-audit.md
+   * §15/§16); the Website-local number alone is only ever used as a
+   * fallback when ERP has no opinion (no `erpVariantId`) or couldn't be
+   * reached (logged, never silently treated as "unlimited").
+   */
   async getVariantForPurchase(variantId: string) {
     const variant = await catalogRepository.findVariantById(variantId);
     if (!variant || !variant.active || variant.product.status !== "ACTIVE") return null;
-    const available = await getAvailableQuantity(db, variantId);
+    const websiteLocalAvailable = await getAvailableQuantity(db, variantId);
+
+    const { availableById, failed } = await fetchErpAvailability([
+      { id: variant.id, sku: variant.sku, erpVariantId: variant.erpVariantId },
+    ]);
+    if (failed) {
+      logger.warn({ variantId }, "erp-inventory: cart availability check degraded to Website-local-only");
+    }
+    const erpAvailable = availableById.get(variant.id);
+    const available = erpAvailable !== undefined ? Math.min(websiteLocalAvailable, erpAvailable) : websiteLocalAvailable;
+
     return {
       variant,
       price: Money.fromMinor(variant.priceAmountMinor),
