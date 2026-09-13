@@ -2,7 +2,7 @@
 
 The ERP-side API boundary the Website will consume in a future, separately-reviewed phase. **Not consumed by the Website yet** — this phase built the ERP side only; no Website sync job, no Website code change, exists as of this document.
 
-Status: Phase 9.3 implemented; **Phase 9.3R (review correction) applied — see §17**. Last updated: 2026-09-12.
+Status: Phase 9.3 implemented; **Phase 9.3R (review correction) applied — see §17**; **Phase 9.5R (inventory identity correction) applied — see §18**. Last updated: 2026-09-13.
 
 ---
 
@@ -56,7 +56,9 @@ No parameters. The category set is small and bounded for this business (a handfu
 
 ### `POST /inventory/availability`
 
-Body: `{ "skus": string[] }` — 1 to 200 entries. `POST`, not `GET`, chosen specifically because a batch of SKUs doesn't fit safely into a query string at this size (URL length limits) — this is still a pure read; no mutation occurs.
+**Updated in Phase 9.5R.** Body: EITHER `{ "variantIds": string[] }` (preferred — ERP's own stable internal variant id, never changes once assigned) OR `{ "skus": string[] }` (kept for backward compatibility only). Exactly one of the two, 1 to 200 entries. `POST`, not `GET`, chosen specifically because a batch of ids/SKUs doesn't fit safely into a query string at this size (URL length limits) — this is still a pure read; no mutation occurs.
+
+**Why `variantIds` was added**: SKU is a mutable, ERP-owned business field (established in Phase 9.4R), not a stable identity — a lookup keyed by SKU risks a real drift-window bug if ERP renames a SKU after the Website's last catalog sync but before its next one (the stale cached SKU would report `notFoundSkus` for a variant that plainly exists). The Website's `Variant.erpVariantId` (added Phase 9.4R) closes this gap; the Website's inventory adapter uses `variantIds` since Phase 9.5R. `skus` remains valid for any caller that genuinely only has a SKU, but is no longer the recommended path.
 
 ## 7. Response schemas — PROPOSED CONTRACT, implemented exactly as shown
 
@@ -122,7 +124,21 @@ No slug (the ERP has none — the Website already generates its own, per the alr
 
 ### Inventory availability
 
+The response mirrors whichever identifier the request used (Phase 9.5R):
+
 ```json
+// request { "variantIds": [...] } -> response:
+{
+  "items": [
+    { "variantId": "<uuid>", "available": 17 }
+  ],
+  "notFoundVariantIds": ["<uuid-that-does-not-exist>"],
+  "requestId": "<uuid>"
+}
+```
+
+```json
+// request { "skus": [...] } -> response (unchanged, backward-compatible):
 {
   "items": [
     { "sku": "DATES-MAJDOOL-500", "available": 17 }
@@ -132,7 +148,7 @@ No slug (the ERP has none — the Website already generates its own, per the alr
 }
 ```
 
-**Deliberately minimal, per this phase's own explicit brief §3**: on-hand, reserved, and the physical source-variant identity (all real, computed internally by `getSellableAvailability()`) are **not exposed** — only the derived `available` count, floored at zero at this boundary. `notFoundSkus` is not an error — a valid, useful partial result distinguishing "resolved to zero, genuinely out of stock" from "this SKU doesn't exist in this company's catalog."
+**Deliberately minimal, per this phase's own explicit brief §3**: on-hand, reserved, and the physical source-variant identity (all real, computed internally by `getSellableAvailability()`) are **not exposed** — only the derived `available` count, floored at zero at this boundary. `notFoundSkus`/`notFoundVariantIds` is not an error — a valid, useful partial result distinguishing "resolved to zero, genuinely out of stock" from "this identifier doesn't exist in this company's catalog."
 
 ## 8. Pagination
 
@@ -268,3 +284,25 @@ Authentication, tenant binding (`TenantContext`/`companyId` resolved solely from
 ### 17.6 Verification
 
 48 tests passed across the four affected files (17 catalog/products — 2 new/changed for this correction, 4 catalog/categories, 13 inventory/availability, 15 warehouse `reservation.service`), plus the full existing suite unaffected (64 tests passed / 38 skipped — the skipped set is the same pre-existing live-Postgres RLS suite, unavailable in this sandbox, unrelated to this change; explicitly not claimed as passing). `npm run check:tenant-scope` (138 files, 0 violations), `npm run typecheck`, `npm run lint`, and `npm run build` all clean.
+
+---
+
+## 18. Phase 9.5R — inventory identity correction (`variantIds` added)
+
+The Website's Phase 9.5 review caught that the inventory adapter conceptually treated the Website's own variant id as the sync identity, while the wire call underneath still had to send `sku` — because this endpoint, as built in Phase 9.3, only accepted SKUs. Phase 9.4R had since established SKU as a mutable, ERP-owned business field, not a stable sync identity, and this endpoint had not been revisited since.
+
+### 18.1 What was found
+
+`getSellableAvailability(ctx, productVariantIds)` (Phase 9.2, unmodified this whole time) was ALWAYS variant-id-keyed internally — the SKU-keying only existed in the thin wrapper this endpoint calls, and that wrapper's own doc comment gave the exact reason: "the Website's own catalog model has no `erpVariantId` column at all." That reason stopped being true the moment Phase 9.4R shipped `Variant.erpVariantId` on the Website side — nothing on the ERP side was ever updated to reflect it. Left as-is, this created a real, demonstrable bug: if a SKU is renamed in ERP after the Website's last catalog sync but before its next one, a lookup using the Website's stale cached SKU value would report `notFoundSkus` for a variant that plainly still exists.
+
+### 18.2 What changed
+
+`POST /inventory/availability` now accepts EITHER `{ variantIds: string[] }` (new, preferred) or `{ skus: string[] }` (unchanged, kept for backward compatibility) — a Zod union, mutually exclusive. The `variantIds` path is a new, minimal function, `getSellableAvailabilityByVariantIds()` (`reservation.service.ts`), which composes the exact same, still-unmodified `getSellableAvailability()` — the only new code is `findVariantIdsExisting()` (`product-variant.repository.ts`), a tenant-scoped existence check mirroring `findVariantsBySkus()`'s own pattern exactly, just id-keyed instead of sku-keyed. Response shape mirrors whichever identifier the request used (§7).
+
+### 18.3 Why this was judged a required, minimal ERP change (not scope creep)
+
+Per the review's own instruction ("STOP before modifying ERP unless the change is demonstrably required... if a minimal ERP-side change is clearly required and safe, implement only that change"): the drift-window bug above is real and directly caused by an ERP-side design choice (SKU-keying) whose own stated justification had become false. The fix is the smallest possible one — one additive request/response shape on one existing route, reusing Phase 9.2's core function completely unmodified, with the old path kept working exactly as before. No ERP schema change, no new business logic, no redesign of inventory.
+
+### 18.4 Verification
+
+6 new tests added to `route.test.ts` (resolves by variant id; a SKU rename does not break a variant-id-keyed lookup, and is shown to break the old SKU-keyed lookup by contrast; not-found reporting; tenant isolation; zero-floor; rejects a body with neither shape) — 19/19 tests in that file passing. Full ERP suite: 70 passed / 38 skipped (the same pre-existing live-Postgres RLS suite, unrelated) — 0 unexpected failures. `check:tenant-scope` (138 files, 0 violations), `typecheck`, `lint`, `build` all clean.

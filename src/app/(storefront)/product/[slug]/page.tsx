@@ -45,6 +45,8 @@ const AVAILABILITY_LABEL: Record<string, { label: string; variant: "success" | "
   in_stock: { label: "متوفر", variant: "success" },
   low_stock: { label: "ينفد قريبًا", variant: "warning" },
   out_of_stock: { label: "غير متوفر حاليًا", variant: "neutral" },
+  /** Phase 9.5R — ERP could not be reached to verify; never shown as confirmed in-stock. */
+  unknown: { label: "يتعذر التحقق من التوفر حاليًا", variant: "neutral" },
 };
 
 /**

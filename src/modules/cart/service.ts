@@ -19,7 +19,8 @@ export type CartLineView = {
   unitPrice: Money;
   lineTotal: Money;
   priceChangedSinceAdded: boolean;
-  availability: "in_stock" | "low_stock" | "out_of_stock";
+  /** "unknown" (Phase 9.5R) — ERP could not be verified for this line; `availableQuantity` is then a non-authoritative, best-effort display number only. */
+  availability: "in_stock" | "low_stock" | "out_of_stock" | "unknown";
   availableQuantity: number;
 };
 
@@ -42,11 +43,27 @@ export const cartService = {
     return cartRepository.createCart(sessionId, customerId);
   },
 
-  /** Clamps to live availability server-side (technical-architecture.md §8) — the client's requested quantity is never trusted outright. */
+  /**
+   * Clamps to live availability server-side (technical-architecture.md
+   * §8) — the client's requested quantity is never trusted outright.
+   *
+   * Phase 9.5R: when ERP could not be verified (`availability ===
+   * "unknown"`), this does NOT clamp against the local, non-authoritative
+   * `availableQuantity` — that would silently present stale local data
+   * as if it were a real stock check. Instead the customer's requested
+   * quantity is preserved as-is (this is a reversible cart action; real
+   * safety is enforced fail-closed at checkout confirmation — see
+   * docs/integration/inventory-integration-audit.md §5/§16).
+   */
   async addItem(cartId: string, variantId: string, requestedQuantity: number) {
     const purchaseInfo = await catalogService.getVariantForPurchase(variantId);
     if (!purchaseInfo) throw new CartItemUnavailableError(variantId, "not_found");
     if (purchaseInfo.availability === "out_of_stock") throw new CartItemUnavailableError(variantId, "out_of_stock");
+
+    if (purchaseInfo.availability === "unknown") {
+      await cartRepository.upsertItem(cartId, variantId, requestedQuantity, purchaseInfo.price.amountMinor);
+      return { addedQuantity: requestedQuantity, clamped: false };
+    }
 
     // Still add what's actually available rather than reject outright — the caller's response surfaces `clamped` so the UI can say so.
     const clamped = Math.min(requestedQuantity, purchaseInfo.availableQuantity);
@@ -63,6 +80,12 @@ export const cartService = {
     }
     const purchaseInfo = await catalogService.getVariantForPurchase(variantId);
     if (!purchaseInfo) throw new CartItemUnavailableError(variantId, "not_found");
+
+    if (purchaseInfo.availability === "unknown") {
+      await cartRepository.setItemQuantity(cartId, variantId, requestedQuantity);
+      return { quantity: requestedQuantity, clamped: false };
+    }
+
     const clamped = Math.min(requestedQuantity, purchaseInfo.availableQuantity);
     await cartRepository.setItemQuantity(cartId, variantId, clamped);
     return { quantity: clamped, clamped: clamped < requestedQuantity };

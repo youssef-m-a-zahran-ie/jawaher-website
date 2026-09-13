@@ -5,11 +5,14 @@ import { isDatabaseAvailable } from "./helpers/db-availability";
 import { createTestSessionAndCart, createTestShippingZone, createTestVariant, cleanupTestData } from "./helpers/fixtures";
 
 /**
- * Phase 9.5 — ERP-authoritative inventory at the two points this phase
- * actually changed: cart quantity clamping and checkout confirmation.
- * Combines this repo's two established integration-test conventions:
- * real Prisma + skipIf(!dbAvailable) (catalog-storefront.test.ts) and a
- * mocked ERP HTTP layer via `@/lib/env` + global fetch (catalog-sync.test.ts).
+ * Phase 9.5, corrected in Phase 9.5R — ERP-authoritative inventory at
+ * the two points this phase changed: cart quantity handling and
+ * checkout confirmation. ERP IS THE ONLY INVENTORY AUTHORITY (audit
+ * §1) — these tests specifically prove there is no `min()`/blending
+ * with the Website-local `inventoryQuantity` anywhere. Combines this
+ * repo's two established integration-test conventions: real Prisma +
+ * skipIf(!dbAvailable) (catalog-storefront.test.ts) and a mocked ERP
+ * HTTP layer via `@/lib/env` + global fetch (catalog-sync.test.ts).
  */
 const dbAvailable = await isDatabaseAvailable();
 
@@ -27,14 +30,14 @@ function mockErpEnv() {
   }));
 }
 
-function stubErpAvailability(bySku: Record<string, number>) {
+function stubErpAvailability(byErpVariantId: Record<string, number>) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      const { skus } = JSON.parse(String(init?.body)) as { skus: string[] };
-      const items = skus.filter((sku) => sku in bySku).map((sku) => ({ sku, available: bySku[sku] }));
-      const notFoundSkus = skus.filter((sku) => !(sku in bySku));
-      return new Response(JSON.stringify({ items, notFoundSkus, requestId: "rid" }), { status: 200 });
+      const { variantIds } = JSON.parse(String(init?.body)) as { variantIds: string[] };
+      const items = variantIds.filter((id) => id in byErpVariantId).map((variantId) => ({ variantId, available: byErpVariantId[variantId] }));
+      const notFoundVariantIds = variantIds.filter((id) => !(id in byErpVariantId));
+      return new Response(JSON.stringify({ items, notFoundVariantIds, requestId: "rid" }), { status: 200 });
     })
   );
 }
@@ -43,7 +46,7 @@ function stubErpUnavailable() {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 500 })));
 }
 
-describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Phase 9.5)", () => {
+describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Phase 9.5R)", () => {
   const categoryIds: string[] = [];
   const sessionIds: string[] = [];
   const shippingZoneIds: string[] = [];
@@ -59,12 +62,42 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     vi.doUnmock("@/lib/env");
   });
 
-  it("cart add clamps to ERP's lower availability even though the Website-local count is higher", async () => {
+  it("ERP says 50, Website-local says 0 -> authoritative availability is 50 (ERP wins outright, never min())", async () => {
+    mockErpEnv();
+    const erpVariantId = `erp-v-${randomUUID()}`;
+    const { category, variant } = await createTestVariant({ quantity: 0, erpVariantId });
+    categoryIds.push(category.id);
+    stubErpAvailability({ [erpVariantId]: 50 });
+
+    const { cartService } = await import("@/modules/cart");
+    const { session, cart } = await createTestSessionAndCart();
+    sessionIds.push(session.id);
+
+    const result = await cartService.addItem(cart.id, variant.id, 10);
+    expect(result.addedQuantity).toBe(10); // fully honored — ERP's 50 is authoritative, local's 0 is irrelevant
+    expect(result.clamped).toBe(false);
+  });
+
+  it("ERP says 0, Website-local says 100 -> authoritative availability is 0 (ERP wins outright, never min())", async () => {
     mockErpEnv();
     const erpVariantId = `erp-v-${randomUUID()}`;
     const { category, variant } = await createTestVariant({ quantity: 100, erpVariantId });
     categoryIds.push(category.id);
-    stubErpAvailability({ [variant.sku]: 3 });
+    stubErpAvailability({ [erpVariantId]: 0 });
+
+    const { cartService, CartItemUnavailableError } = await import("@/modules/cart");
+    const { session, cart } = await createTestSessionAndCart();
+    sessionIds.push(session.id);
+
+    await expect(cartService.addItem(cart.id, variant.id, 10)).rejects.toBeInstanceOf(CartItemUnavailableError);
+  });
+
+  it("cart add uses ERP's lower number outright when it is the binding constraint", async () => {
+    mockErpEnv();
+    const erpVariantId = `erp-v-${randomUUID()}`;
+    const { category, variant } = await createTestVariant({ quantity: 100, erpVariantId });
+    categoryIds.push(category.id);
+    stubErpAvailability({ [erpVariantId]: 3 });
 
     const { cartService } = await import("@/modules/cart");
     const { session, cart } = await createTestSessionAndCart();
@@ -75,7 +108,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     expect(result.clamped).toBe(true);
   });
 
-  it("cart add falls back to Website-local availability (unchanged pre-9.5 behavior) when the variant has no erpVariantId", async () => {
+  it("cart add falls back to Website-local availability when the variant has no erpVariantId at all (no ERP claim exists to honor or override)", async () => {
     mockErpEnv();
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
@@ -91,7 +124,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("cart add falls back to Website-local availability (not a hard failure) when ERP is unavailable", async () => {
+  it("cart add preserves the customer's full requested quantity (never clamped against local data) when ERP cannot be reached — availability is 'unknown', not a fabricated 'in stock'", async () => {
     mockErpEnv();
     const erpVariantId = `erp-v-${randomUUID()}`;
     const { category, variant } = await createTestVariant({ quantity: 5, erpVariantId });
@@ -103,7 +136,12 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     sessionIds.push(session.id);
 
     const result = await cartService.addItem(cart.id, variant.id, 10);
-    expect(result.addedQuantity).toBe(5); // degraded to the Website-local number, not blocked, not "unlimited"
+    expect(result.addedQuantity).toBe(10); // NOT clamped to the local "5" — that would be presenting stale data as verified
+    expect(result.clamped).toBe(false);
+
+    const { db } = await import("@/lib/db");
+    const item = await db.cartItem.findUnique({ where: { cartId_variantId: { cartId: cart.id, variantId: variant.id } } });
+    expect(item?.quantity).toBe(10);
   });
 
   it("checkout confirmation rejects with InsufficientInventoryError when ERP reports less than requested, even though Website-local stock is sufficient", async () => {
@@ -115,10 +153,9 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     shippingZoneIds.push(zone.id);
 
     // At add-to-cart time ERP still had plenty...
-    stubErpAvailability({ [variant.sku]: 50 });
+    stubErpAvailability({ [erpVariantId]: 50 });
     const { cartService } = await import("@/modules/cart");
-    const { checkoutService, CheckoutValidationError: _unused } = await import("@/modules/checkout");
-    void _unused;
+    const { checkoutService } = await import("@/modules/checkout");
     const { InsufficientInventoryError } = await import("@/modules/catalog");
     const { session, cart } = await createTestSessionAndCart();
     sessionIds.push(session.id);
@@ -135,7 +172,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     await checkoutService.getShippingRates(checkoutSession.id);
 
     // ...but by the time the customer confirms, ERP stock dropped below the cart quantity.
-    stubErpAvailability({ [variant.sku]: 2 });
+    stubErpAvailability({ [erpVariantId]: 2 });
 
     await expect(
       checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-${randomUUID()}` })
@@ -148,7 +185,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     expect(reservations.filter((r) => r.status === "ACTIVE")).toHaveLength(0);
   });
 
-  it("checkout confirmation fails closed (CheckoutValidationError: availability_check_unavailable) when ERP cannot be reached, rather than committing on stale data", async () => {
+  it("checkout confirmation fails closed (CheckoutValidationError: availability_check_unavailable) when ERP cannot be reached, rather than committing on stale data — does NOT eliminate the race, only narrows it", async () => {
     mockErpEnv();
     const erpVariantId = `erp-v-${randomUUID()}`;
     const { category, variant } = await createTestVariant({ quantity: 100, erpVariantId, priceEgp: 100 });
@@ -156,7 +193,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     const zone = await createTestShippingZone({ feeEgp: 60 });
     shippingZoneIds.push(zone.id);
 
-    stubErpAvailability({ [variant.sku]: 50 });
+    stubErpAvailability({ [erpVariantId]: 50 });
     const { cartService } = await import("@/modules/cart");
     const { checkoutService, CheckoutValidationError } = await import("@/modules/checkout");
     const { session, cart } = await createTestSessionAndCart();
@@ -191,7 +228,7 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     categoryIds.push(category.id);
     const zone = await createTestShippingZone({ feeEgp: 60 });
     shippingZoneIds.push(zone.id);
-    stubErpAvailability({ [variant.sku]: 20 });
+    stubErpAvailability({ [erpVariantId]: 20 });
 
     const { cartService } = await import("@/modules/cart");
     const { checkoutService } = await import("@/modules/checkout");
@@ -214,6 +251,22 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
       idempotencyKey: `test-${randomUUID()}`,
     });
     expect(order.orderNumber).toMatch(/^JAK-\d{6}$/);
+  });
+
+  it("PDP (catalogService.getProduct) shows ERP-authoritative availability, overriding a misleadingly-high Website-local count", async () => {
+    mockErpEnv();
+    const erpVariantId = `erp-v-${randomUUID()}`;
+    const { category, product, variant } = await createTestVariant({ quantity: 999, erpVariantId });
+    categoryIds.push(category.id);
+    stubErpAvailability({ [erpVariantId]: 0 });
+
+    const { catalogService } = await import("@/modules/catalog");
+    const { db } = await import("@/lib/db");
+    const productRow = await db.product.findUniqueOrThrow({ where: { id: product.id } });
+
+    const result = await catalogService.getProduct(productRow.slug);
+    const line = result?.variants.find((v) => v.id === variant.id);
+    expect(line?.availability).toBe("out_of_stock"); // ERP's 0, not the local 999
   });
 });
 

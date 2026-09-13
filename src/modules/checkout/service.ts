@@ -137,7 +137,6 @@ export const checkoutService = {
     const { failed, availableById } = await fetchErpAvailability(
       preCheckSession.cart.items.map((item) => ({
         id: item.variant.id,
-        sku: item.variant.sku,
         erpVariantId: item.variant.erpVariantId,
       })),
     );

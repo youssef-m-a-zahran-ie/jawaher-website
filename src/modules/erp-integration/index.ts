@@ -19,4 +19,4 @@ export type {
   ListErpCategoriesResult,
 } from "./catalog";
 export { erpInventoryAdapter, ErpInvalidInventoryResponseError } from "./inventory";
-export type { VariantIdentity, ErpAvailabilityResult } from "./inventory";
+export type { ErpAvailabilityResult } from "./inventory";

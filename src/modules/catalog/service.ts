@@ -34,10 +34,22 @@ export const catalogService = {
     return catalogRepository.listCategories();
   },
 
+  /**
+   * The PDP's data source. Unlike the listing methods below, this
+   * overlays a live, ERP-authoritative availability read on top of the
+   * base (Website-local) `mapProduct()` result — Phase 9.5R, per the
+   * review's explicit "PDP is more important than Shop if only one can
+   * be safely completed" instruction. Shop/search listings deliberately
+   * do NOT get this overlay (see docs/integration/inventory-integration-audit.md
+   * §18 for why: an unbounded per-listing-page ERP fan-out is exactly
+   * the N+1 risk this phase must not introduce) — a real, named,
+   * documented limitation, not an oversight.
+   */
   async getProduct(slug: string): Promise<ProductView | null> {
     const row = await catalogRepository.findProductBySlugWithVariants(slug);
     if (!row || row.status !== "ACTIVE") return null;
-    return mapProduct(row);
+    const product = await mapProduct(row);
+    return applyErpAvailabilityOverlay(product, row.variants);
   },
 
   async listProductsByCategory(categorySlug: string): Promise<ProductView[]> {
@@ -60,35 +72,84 @@ export const catalogService = {
 
   /**
    * Used by Cart to re-validate a line item against live data — never
-   * trust a client-supplied price/availability. Takes the MINIMUM of the
-   * Website-local number and a live ERP read (Phase 9.5) — ERP is the
-   * inventory authority (docs/integration/inventory-integration-audit.md
-   * §15/§16); the Website-local number alone is only ever used as a
-   * fallback when ERP has no opinion (no `erpVariantId`) or couldn't be
-   * reached (logged, never silently treated as "unlimited").
+   * trust a client-supplied price/availability. ERP IS THE ONLY
+   * INVENTORY AUTHORITY (Phase 9.5R correction — docs/integration/
+   * inventory-integration-audit.md §1): when ERP answers, its number is
+   * used ALONE, never combined with the Website-local number via
+   * `min()` or any other blend. Website-local data (`inventoryQuantity`)
+   * is used only when there is genuinely no ERP claim to defer to (no
+   * `erpVariantId`) — never as a fallback that quietly overrides or
+   * dilutes a real ERP answer, and never presented as verified when ERP
+   * could not be reached (see the `"unknown"` branch below).
    */
   async getVariantForPurchase(variantId: string) {
     const variant = await catalogRepository.findVariantById(variantId);
     if (!variant || !variant.active || variant.product.status !== "ACTIVE") return null;
-    const websiteLocalAvailable = await getAvailableQuantity(db, variantId);
+    const price = Money.fromMinor(variant.priceAmountMinor);
 
-    const { availableById, failed } = await fetchErpAvailability([
-      { id: variant.id, sku: variant.sku, erpVariantId: variant.erpVariantId },
-    ]);
-    if (failed) {
-      logger.warn({ variantId }, "erp-inventory: cart availability check degraded to Website-local-only");
+    if (variant.erpVariantId === null) {
+      // Never synced from ERP — there is no ERP claim to honor or
+      // override; Website-local data is the only data that has ever
+      // existed for this row (legacy/unmigrated catalog item).
+      const localAvailable = await getAvailableQuantity(db, variantId);
+      return { variant, price, availability: deriveAvailability(localAvailable), availableQuantity: localAvailable };
     }
-    const erpAvailable = availableById.get(variant.id);
-    const available = erpAvailable !== undefined ? Math.min(websiteLocalAvailable, erpAvailable) : websiteLocalAvailable;
 
-    return {
-      variant,
-      price: Money.fromMinor(variant.priceAmountMinor),
-      availability: deriveAvailability(available),
-      availableQuantity: available,
-    };
+    const { availableById, failed } = await fetchErpAvailability([{ id: variant.id, erpVariantId: variant.erpVariantId }]);
+    if (failed) {
+      // A genuine verification failure — NOT silently treated as "use
+      // Website-local data as truth" (Phase 9.5R §5). `availableQuantity`
+      // still carries a best-effort local number for display purposes
+      // only (e.g. so the UI doesn't show a scary "0 available"); any
+      // caller gating a purchase decision must branch on `availability`,
+      // never on this number, when it is `"unknown"`.
+      logger.warn({ variantId }, "erp-inventory: could not verify availability — returning \"unknown\", not a fabricated local number");
+      const localAvailable = await getAvailableQuantity(db, variantId);
+      return { variant, price, availability: "unknown" as const, availableQuantity: localAvailable };
+    }
+
+    const erpAvailable = availableById.get(variant.id) ?? 0; // ERP responded but had nothing for this id — genuinely not found/no stock, authoritative
+    return { variant, price, availability: deriveAvailability(erpAvailable), availableQuantity: erpAvailable };
   },
 };
+
+/**
+ * PDP-only ERP availability overlay (Phase 9.5R) — a single batched call
+ * for every variant of one product (bounded, safe; see `getProduct()`'s
+ * own comment). Same authority rule as `getVariantForPurchase`: ERP's
+ * number replaces the Website-local one outright when available; never
+ * combined via `min()`. Variants with no `erpVariantId`, or when ERP
+ * could not be reached at all, keep `mapProduct()`'s original
+ * Website-local-derived availability — for the failure case this is a
+ * deliberately narrower exception than cart/checkout's own policy (this
+ * is a page *read*, not a purchase decision; §2 of the review accepts a
+ * PDP falling back to its pre-existing display rather than blocking the
+ * page) but is never claimed to be ERP-verified when it isn't.
+ */
+async function applyErpAvailabilityOverlay(
+  product: ProductView,
+  rawVariants: CatalogVariantRow[]
+): Promise<ProductView> {
+  const checkable = rawVariants.filter((v) => v.erpVariantId !== null);
+  if (checkable.length === 0) return product;
+
+  const { availableById, failed } = await fetchErpAvailability(
+    checkable.map((v) => ({ id: v.id, erpVariantId: v.erpVariantId }))
+  );
+  if (failed) {
+    logger.warn({ productId: product.id }, "erp-inventory: PDP availability check failed — showing Website-local data, not ERP-verified");
+    return product;
+  }
+
+  return {
+    ...product,
+    variants: product.variants.map((variantView) => {
+      const erpAvailable = availableById.get(variantView.id);
+      if (erpAvailable === undefined) return variantView; // this variant had no erpVariantId — untouched
+      return { ...variantView, availability: deriveAvailability(erpAvailable) };
+    }),
+  };
+}
 
 async function mapProduct(row: CatalogProductRow): Promise<ProductView> {
   const variants = await Promise.all(row.variants.map(mapVariant));

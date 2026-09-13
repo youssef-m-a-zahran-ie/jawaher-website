@@ -7,7 +7,17 @@ import { erpInventoryAdapter } from "@/modules/erp-integration";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type AvailabilityState = "in_stock" | "low_stock" | "out_of_stock";
+/**
+ * "unknown" (Phase 9.5R) — ERP is the sole inventory authority (see
+ * docs/integration/inventory-integration-audit.md §1); this state exists
+ * so a caller that could not get an authoritative ERP answer has an
+ * honest way to say so, instead of being forced to pick between a false
+ * "in_stock" (using stale local data as if verified) or a false
+ * "out_of_stock" (which could hide a genuinely purchasable item during a
+ * transient ERP hiccup). Never returned by `deriveAvailability()` itself
+ * — only ever set directly by a caller that knows verification failed.
+ */
+export type AvailabilityState = "in_stock" | "low_stock" | "out_of_stock" | "unknown";
 
 /**
  * Below this many available units, the storefront shows "ينفد قريبًا"
@@ -147,48 +157,62 @@ export async function expireStaleReservations(client: PrismaClient = db): Promis
 
 /**
  * ============================================================================
- * ERP-AWARE AVAILABILITY — Phase 9.5
+ * ERP-AWARE AVAILABILITY — Phase 9.5, corrected in Phase 9.5R
  * ============================================================================
- * ERP is the authoritative inventory source (see
- * docs/integration/inventory-integration-audit.md). This project's own
- * `InventoryReservation`/`inventoryQuantity` above remain UNCHANGED and
- * continue to guard against two simultaneous Website checkouts racing
- * for the same (Website-local) unit — they are reclassified, not
- * replaced, as a non-authoritative same-repo concurrency guard (audit
- * §7/§15). What follows adds a live ERP read on top, combined per the
- * audit's explicit, asymmetric fallback policy (§16):
- *   - a variant with no `erpVariantId` was never expected to have an ERP
- *     opinion — never a failure, always falls back silently (but logged
- *     at the caller's discretion).
- *   - a variant WITH an `erpVariantId` whose ERP check fails (timeout/
- *     unavailable/malformed) IS reported as a failure (`failed: true`) —
- *     callers decide what to do with that per their own stakes (see
- *     `getVariantForPurchase` in service.ts vs. checkout's pre-check).
+ * ERP IS THE ONLY INVENTORY AUTHORITY (audit §1). This project's own
+ * `InventoryReservation`/`inventoryQuantity` above remain UNCHANGED code,
+ * but are strictly LEGACY/NON-AUTHORITATIVE data — they continue to
+ * guard against two simultaneous Website checkouts racing for the same
+ * (Website-local, stale) unit, a same-repo concurrency guard only (audit
+ * §7/§15). They are NEVER combined with an ERP answer (no `min()`, no
+ * averaging, nothing) — when ERP has an answer, ERP's number is used
+ * alone, full stop; the local number cannot narrow, widen, or otherwise
+ * influence it.
+ *
+ * Two, and only two, legitimate reasons local data is ever used at all:
+ *   1. The variant has no `erpVariantId` (never synced from ERP) — there
+ *      is no ERP claim to honor or override; this is not a fallback from
+ *      failure, it's the only data that has ever existed for this row.
+ *   2. ERP could not be reached (timeout/unavailable/malformed) for a
+ *      variant that DOES have an `erpVariantId` — this is a real
+ *      verification failure. It is reported as `failed: true` and MUST
+ *      NOT be silently treated as "use local data as truth" by any
+ *      caller — see `getVariantForPurchase` (service.ts), which returns
+ *      the explicit `"unknown"` state for this case, never a number
+ *      borrowed from `inventoryQuantity` presented as if verified.
  * ============================================================================
  */
 
-export type ErpVariantForAvailability = { id: string; sku: string; erpVariantId: string | null };
+export type ErpVariantForAvailability = { id: string; erpVariantId: string | null };
 
 /**
  * Batched: a cart or a checkout's line count is always small, so this is
  * always at most one ERP call (the adapter itself sub-batches beyond its
- * own per-request SKU limit, which no realistic cart/checkout approaches).
- * Keyed by the Website's own variant `id` — never by `sku` (see
- * erp-integration/inventory.ts's own header comment on why).
+ * own per-request id limit, which no realistic cart/checkout approaches).
+ * Keyed by the Website's own variant `id` (re-keyed internally from
+ * ERP's own `erpVariantId`, which is what's actually sent over the wire
+ * — see erp-integration/inventory.ts).
  */
 export async function fetchErpAvailability(
   variants: ErpVariantForAvailability[]
 ): Promise<{ availableById: Map<string, number>; failed: boolean }> {
-  const checkable = variants.filter((v) => v.erpVariantId !== null);
+  const checkable = variants.filter((v): v is { id: string; erpVariantId: string } => v.erpVariantId !== null);
   if (checkable.length === 0) return { availableById: new Map(), failed: false };
 
+  const websiteIdByErpVariantId = new Map(checkable.map((v) => [v.erpVariantId, v.id]));
+
   try {
-    const { availableById } = await erpInventoryAdapter.getAvailability(
-      checkable.map((v) => ({ id: v.id, sku: v.sku }))
+    const { availableById: availableByErpVariantId } = await erpInventoryAdapter.getAvailability(
+      checkable.map((v) => v.erpVariantId)
     );
+    const availableById = new Map<string, number>();
+    for (const [erpVariantId, available] of availableByErpVariantId) {
+      const websiteId = websiteIdByErpVariantId.get(erpVariantId);
+      if (websiteId !== undefined) availableById.set(websiteId, available);
+    }
     return { availableById, failed: false };
   } catch (err) {
-    logger.warn({ err, variantIds: checkable.map((v) => v.id) }, "erp-inventory: availability check failed — falling back per caller's own policy");
+    logger.warn({ err, variantIds: checkable.map((v) => v.id) }, "erp-inventory: availability check failed — caller must treat this as unknown, never as local data masquerading as truth");
     return { availableById: new Map(), failed: true };
   }
 }

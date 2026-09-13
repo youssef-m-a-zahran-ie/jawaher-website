@@ -4,22 +4,19 @@ import { callErpIntegrationApi } from "./client";
 
 /**
  * ============================================================================
- * ERP INVENTORY ADAPTER — Phase 9.5 (read-only foundation)
+ * ERP INVENTORY ADAPTER — Phase 9.5, corrected in Phase 9.5R
  * ============================================================================
- * Wraps the existing, unmodified `POST /api/v1/integrations/website/
- * inventory/availability` endpoint (Phase 9.3/9.3R) — no ERP change was
- * needed or made; that endpoint already returns exactly what this phase
- * requires (a single, bundle/component-resolved, floored-at-zero sellable
- * count per SKU — see docs/integration/inventory-integration-audit.md §9/§13/§14).
+ * Wraps `POST /api/v1/integrations/website/inventory/availability`.
  *
- * IDENTITY: the wire contract is unavoidably SKU-keyed (a Phase 9.3
- * decision, unchanged) — this file's public function honors "ERP Variant
- * ID as identity, not SKU" at the call-convention layer instead: callers
- * pass `{ id, sku }` pairs (the Website's own Variant identity plus the
- * ERP-owned SKU needed only as this one endpoint's wire parameter), and
- * results come back keyed by the caller's own `id`, never by raw SKU.
- * `sku` here is round-tripped ERP-owned data (Phase 9.4/9.4R), not a
- * Website-invented identity choice.
+ * IDENTITY (Phase 9.5R): the endpoint's `variantIds` request shape,
+ * added specifically for this correction (erp-catalog-inventory-api.md
+ * §18), is used here — ERP's own stable internal variant id, keyed the
+ * same way on the way out. SKU is never sent or reasoned about anywhere
+ * in this file. The Website's Phase 9.5 first draft used the SKU-keyed
+ * shape (the only one the endpoint had at the time) with a client-side
+ * re-keying trick; the ERP-side fix is the real one — see
+ * docs/integration/inventory-integration-audit.md §for the identity
+ * section for the full history.
  *
  * Reuses Phase 8's `callErpIntegrationApi` exactly — no second ERP
  * client/auth mechanism, matching `erp-integration/catalog.ts`'s own
@@ -35,45 +32,39 @@ export class ErpInvalidInventoryResponseError extends Error {
 }
 
 const erpAvailabilityResponseSchema = z.object({
-  items: z.array(z.object({ sku: z.string(), available: z.number() })),
-  notFoundSkus: z.array(z.string()),
+  items: z.array(z.object({ variantId: z.string(), available: z.number() })),
+  notFoundVariantIds: z.array(z.string()),
 });
 
-export interface VariantIdentity {
-  /** The Website's own internal identity for this variant — what every result is keyed by. */
-  id: string;
-  /** ERP-owned, round-tripped SKU — used only as this endpoint's wire parameter, never as identity. */
-  sku: string;
-}
-
 export interface ErpAvailabilityResult {
-  /** Keyed by the caller's own `id` (never by `sku`). A missing entry means ERP reported the SKU as not found. */
+  /** Keyed by ERP's own variant id (== the Website's `Variant.erpVariantId`). A missing entry means ERP reported it not found, or that id was never requested. */
   availableById: Map<string, number>;
   requestId: string;
 }
 
-const MAX_SKUS_PER_REQUEST = 200; // matches the ERP endpoint's own documented limit (erp-catalog-inventory-api.md §6)
+const MAX_IDS_PER_REQUEST = 200; // matches the ERP endpoint's own documented limit (erp-catalog-inventory-api.md §6)
 
 export const erpInventoryAdapter = {
   /**
-   * Batches internally at the ERP endpoint's own limit — a cart or a
-   * checkout's line count is always far below this in practice, so no
-   * caller of this function needs to think about batching itself.
+   * `erpVariantIds` — ERP's own internal variant ids
+   * (`Variant.erpVariantId` on the Website side, Phase 9.4R). Batches
+   * internally at the ERP endpoint's own limit — a cart or a checkout's
+   * line count is always far below this in practice, so no caller of
+   * this function needs to think about batching itself.
    */
-  async getAvailability(variants: VariantIdentity[], requestId?: string): Promise<ErpAvailabilityResult> {
+  async getAvailability(erpVariantIds: string[], requestId?: string): Promise<ErpAvailabilityResult> {
     const availableById = new Map<string, number>();
-    if (variants.length === 0) return { availableById, requestId: requestId ?? "" };
+    if (erpVariantIds.length === 0) return { availableById, requestId: requestId ?? "" };
 
-    const idBySku = new Map(variants.map((v) => [v.sku, v.id]));
     let lastRequestId = requestId ?? "";
 
-    for (let i = 0; i < variants.length; i += MAX_SKUS_PER_REQUEST) {
-      const batch = variants.slice(i, i + MAX_SKUS_PER_REQUEST);
+    for (let i = 0; i < erpVariantIds.length; i += MAX_IDS_PER_REQUEST) {
+      const batch = erpVariantIds.slice(i, i + MAX_IDS_PER_REQUEST);
       const { data, requestId: rid } = await callErpIntegrationApi<unknown>({
         path: "/api/v1/integrations/website/inventory/availability",
         method: "POST",
         requestId,
-        body: { skus: batch.map((v) => v.sku) },
+        body: { variantIds: batch },
       });
       lastRequestId = rid;
       const parsed = erpAvailabilityResponseSchema.safeParse(data);
@@ -81,8 +72,7 @@ export const erpInventoryAdapter = {
         throw new ErpInvalidInventoryResponseError(rid, parsed.error.issues.map((issue) => issue.message).join("; "));
       }
       for (const item of parsed.data.items) {
-        const id = idBySku.get(item.sku);
-        if (id !== undefined) availableById.set(id, item.available);
+        availableById.set(item.variantId, item.available);
       }
     }
 

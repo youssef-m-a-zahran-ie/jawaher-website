@@ -1,6 +1,6 @@
 # Inventory Integration Audit (Phase 9.5)
 
-Status: audit complete, minimum safe read-only foundation implemented. Last updated: 2026-09-13.
+Status: audit complete, minimum safe read-only foundation implemented; **Phase 9.5R (authority/identity/PDP correction) applied — see §19**. Last updated: 2026-09-13.
 
 This document is a **code-verified audit**, not a documentation summary — every claim below cites the actual file:line evidence found this phase (both repositories re-inspected directly; nothing here is inferred from prior-phase docs alone).
 
@@ -64,13 +64,13 @@ Two distinct races exist, at different layers, neither fully closable without a 
 
 ## 9. What data must Website read from ERP?
 
-Sellable availability (`getSellableAvailability()`'s output, exposed via the already-approved `POST /api/v1/integrations/website/inventory/availability` endpoint) — a single, bundle/component-resolved, floored-at-zero number per SKU. Nothing else was needed this phase; no new ERP endpoint was required or built.
+Sellable availability (`getSellableAvailability()`'s output, exposed via the already-approved `POST /api/v1/integrations/website/inventory/availability` endpoint) — a single, bundle/component-resolved, floored-at-zero number per identifier. Nothing else was needed; no new business logic was built on the ERP side.
 
-**Identity note (honoring "do not identify variants by SKU" without modifying ERP)**: the existing, already-approved inventory endpoint's wire contract is SKU-keyed (`{skus: string[]}` → `{items: [{sku, available}]}`) — a Phase 9.3 decision, unchanged, and not something this phase may alter without a proven ERP-side need (none exists — the endpoint already provides everything required). The Website honors the "ERP Variant ID as identity" requirement at the **data-model/call-convention layer**: every Website-side function introduced this phase takes and returns results keyed by the Website's own `Variant.id` (with `Variant.erpVariantId` as the underlying ERP-identity reference, per Phase 9.4R), and uses `sku` **only as the necessary wire parameter** of the one existing, unchanged HTTP contract — never as a concept any calling code (`cartService`, `checkoutService`) reasons about. `sku` is itself ERP-owned, always-overwritten, round-tripped data (Phase 9.4/9.4R), not a Website-invented identity choice.
+**Identity — corrected in Phase 9.5R.** The Phase 9.5 first draft used the endpoint's only-then-available SKU-keyed wire shape with a client-side re-keying trick and described this as "honoring ERP Variant ID as identity at the call-convention layer" — the review correctly rejected that as insufficient, since the wire call itself still depended on a mutable field. The real fix (§18/§19, and `erp-catalog-inventory-api.md` §18) added a `variantIds` request/response shape to the existing endpoint, reusing Phase 9.2's variant-id-keyed `getSellableAvailability()` directly. The Website's adapter (`erp-integration/inventory.ts`) now sends and receives ERP's own variant id end to end — `sku` is not sent by this adapter at all, anywhere.
 
 ## 10. What data must Website never treat as authoritative?
 
-- `Variant.inventoryQuantity` — a stale, seed-populated, never-synced local number (§1/§2). This phase does not change what writes it (still nothing) or what reads it (existing code is untouched) — it only adds a **second, ERP-sourced signal** that new code combines with it (§16).
+- `Variant.inventoryQuantity` — a stale, seed-populated, never-synced local number (§1/§2). **Corrected in Phase 9.5R**: this phase's first draft combined it with ERP's number via `min()`, which the review correctly identified as creating a false second authority. It is no longer combined with ERP's answer at all — when ERP has an answer, ERP's number is used alone; local data is used only when there is no ERP answer to defer to (see §16/§19).
 - The Website's own `InventoryReservation` table — a same-repo concurrency guard only (§7), never a substitute for ERP's real reservation/stock state.
 - Any cached/previously-fetched ERP availability number older than the current request — no caching was introduced this phase (§14), so this is currently moot, but is documented as a constraint on any future caching layer.
 
@@ -88,35 +88,42 @@ No new work needed — already fully resolved on the ERP side. `getSellableAvail
 
 ## 14. How should negative ERP availability be presented to customers?
 
-Never seen by the Website at all — verified directly in ERP's own code: `getSellableAvailability()` deliberately does **not** floor at zero (`reservation.service.ts:374-381`, "does not floor negative results"), but the one function the Website-facing route actually calls, `getSellableAvailabilityBySkus()`, does: `available: Math.max(0, availability?.available ?? 0)` (`reservation.service.ts:534`). Every response from the endpoint the Website calls is already floored at zero server-side. No Website-side flooring logic was needed or added.
+**Never seen by the Website at all — this is ERP's own real semantics, not a Website business rule.** Verified directly in ERP's own code: `getSellableAvailability()` deliberately does **not** floor at zero for its *internal* callers (`reservation.service.ts:374-381`, "does not floor negative results" — internally, a negative number is meaningful: it flags a real oversold condition worth alerting ERP staff on). But every function the Website-facing route actually calls (`getSellableAvailabilityBySkus()` and, since Phase 9.5R, `getSellableAvailabilityByVariantIds()`) floors at zero before returning: `available: Math.max(0, availability?.available ?? 0)` (`reservation.service.ts`). This is ERP's own, already-implemented boundary decision — not a Website business rule invented here, and not something the Website needs to re-implement or re-decide: **the Website will structurally never receive a negative number from this endpoint**, so there is no "how do we display negative stock to a customer" question left open on the Website side. If ERP's own internal negative-availability alerting ever needs to change, that is an ERP-side concern outside this document's scope.
 
-## 15. What is the minimum safe architecture for Phase 9.5?
+## 15. What is the minimum safe architecture for Phase 9.5 (corrected in 9.5R)?
 
 ```
 ERP (StockQuant, real reservations, getSellableAvailability)
-  -> POST /api/v1/integrations/website/inventory/availability   [unchanged, Phase 9.3/9.3R]
-  -> Website ERP Inventory Adapter (NEW, read-only, keyed by Website Variant id)
-  -> combined with the existing Website-local availableQuantity (never replaced, never deleted)
-  -> Cart add/update-quantity validation (NEW: takes the minimum of both signals)
-  -> Checkout confirmation pre-check (NEW: a fresh ERP read immediately before the existing
-     Website-local reservation transaction; fails closed on ERP failure)
+  -> POST /api/v1/integrations/website/inventory/availability   [variantIds shape added, Phase 9.5R]
+  -> Website ERP Inventory Adapter (read-only, keyed by ERP's own variant id end to end)
+  -> ERP's number used ALONE when available — never combined with Website-local data
+  -> Cart add/update-quantity: honors ERP's number outright; preserves the customer's
+     requested quantity (marked "unknown", not silently "in stock") when ERP cannot be reached
+  -> PDP (getProduct): a single batched ERP overlay per product page, replacing the
+     Website-local availability outright when ERP answers (Phase 9.5R) — Shop/search
+     listings deliberately still do not call ERP (§18, unbounded-fan-out risk)
+  -> Checkout confirmation pre-check: a fresh ERP read immediately before the existing
+     Website-local reservation transaction; fails closed on ERP failure
   -> existing Website-local InventoryReservation (UNCHANGED code, RECLASSIFIED role: a
-     same-repo, non-authoritative concurrency guard — never inventory truth)
+     same-repo, non-authoritative concurrency guard — never inventory truth, and never
+     blended with an ERP answer)
 ```
 
-No schema change was required (`Variant.erpVariantId`/`sku` already exist from Phase 9.4R). No ERP change was required (the existing endpoint already provides everything needed). No new caching/queue/Redis infrastructure was introduced.
+No schema change was required (`Variant.erpVariantId` already exists from Phase 9.4R). One minimal, additive ERP-side change was required and made in Phase 9.5R — see `erp-catalog-inventory-api.md` §18 — because the existing SKU-keyed endpoint alone did not provide a stable-identity lookup. No new caching/queue/Redis infrastructure was introduced.
 
 ---
 
-## 16. Failure & fallback policy (explicit, implemented)
+## 16. Failure & fallback policy (corrected in Phase 9.5R)
 
-| Scenario | Cart add/update-quantity | Checkout confirmation |
-|---|---|---|
-| ERP returns a real number | Take `min(ERP available, Website-local availableQuantity)` | Reject the order if ERP says any line's quantity is insufficient |
-| Variant has no `erpVariantId` (never synced from ERP) | Fall back to Website-local-only (ERP was never expected to have an opinion) — logged | Same: fall back to Website-local-only check + reservation, exactly as before this phase |
-| ERP unavailable/timeout/5xx/malformed response | **Fall back to Website-local-only** (the exact pre-Phase-9.5 behavior) — never silently treated as "unlimited stock", logged as degraded | **Fails closed**: rejects with a clear "temporarily unable to confirm your order" error — does **not** fall back to stale local data for the final commitment step |
-| ERP says `0` | Treated as genuinely out of stock, same as a local zero | Same |
-| Bundle with an unavailable component | Not distinguishable from any other zero — ERP already resolved this (§13) | Same |
+| Scenario | Cart add/update-quantity | PDP display | Checkout confirmation |
+|---|---|---|---|
+| ERP returns a real number | **ERP's number alone is authoritative** — never blended with Website-local data | ERP's number alone, overlaid onto the page | Reject the order if ERP says any line's quantity is insufficient |
+| Variant has no `erpVariantId` (never synced from ERP) | Website-local-only (no ERP claim exists to defer to — not a fallback from failure) | Same | Same: Website-local-only check + reservation, exactly as before this phase |
+| ERP unavailable/timeout/5xx/malformed response | **Explicit `"unknown"` state.** The customer's requested quantity is preserved as cart state (never clamped against local data, which would silently present it as verified) | Falls back to the Website-local number for display only — logged, never claimed as ERP-verified | **Fails closed**: rejects with a clear "temporarily unable to confirm your order" error — does **not** fall back to stale local data for the final commitment step |
+| ERP says `0` | Treated as genuinely out of stock (an authoritative answer, not a failure) | Same | Same |
+| Bundle with an unavailable component | Not distinguishable from any other zero — ERP already resolved this (§13) | Same | Same |
+
+**The Phase 9.5 first draft's cart-failure behavior — "fall back to Website-local-only, as if verified" — was exactly the false-second-authority pattern this correction removes.** The corrected behavior never presents an unverified number as if it were checked; it either uses ERP's real answer, uses local data honestly (only when no ERP claim exists at all), or says explicitly that verification failed.
 
 This asymmetry is deliberate: cart clamping is a soft, fully reversible UX action, where degrading to the system's own pre-existing behavior is safe; checkout confirmation creates a real, hard-to-reverse commitment (an `Order` row, a `Payment` attempt), where this phase's own explicit instruction ("prefer a safe state... rather than falsely promising stock") is applied at its strongest.
 
@@ -129,11 +136,46 @@ This asymmetry is deliberate: cart clamping is a soft, fully reversible UX actio
 - **A real ERP reservation/commitment API reachable by the Website.** Confirmed not to exist (§5/§9) — needed to fully close the race in §8/§12. Documented as a required follow-up (Step 6 Option C), not invented as a fake endpoint.
 - **COD-specific reservation duration/behavior.** Unchanged from the pre-existing `RESERVATION_TTL_MS`/`INVENTORY_RESERVATION_TTL_MINUTES` (already flagged as an open business decision in an earlier phase, `commerce-completeness-audit.md` §5) — not revisited here.
 - **Whether ERP unavailability should ever allow checkout to proceed on stale data (a grace period).** Not decided — the current default is fail-closed (§16); a future business decision could relax this with an explicit, bounded policy, but none is invented here.
-- **A fourth, distinct "temporarily unavailable due to integration issue" customer-facing UI state.** Not added — the existing three-state `AvailabilityState` (`in_stock`/`low_stock`/`out_of_stock`) is unchanged, since introducing a new UI state is a frontend design decision (out of scope: "do not redesign the frontend"). When ERP data can't be determined, the system currently falls back to computing one of the existing three states from Website-local data only (§16) — a future phase may want a distinct "checking availability..." treatment.
-- **Shop/PDP listing-page availability staleness.** Deliberately NOT changed this phase — see §18.
+- **Shop listing-page availability staleness.** Deliberately NOT changed this phase — see §18 (PDP was corrected in 9.5R; Shop remains local-only).
 
 ## 18. Explicitly out of scope this phase (and why)
 
-- **Shop listing pages, search results, and the PDP's own displayed badge remain exactly as they were** — still computed from Website-local `inventoryQuantity` only, via the shared `mapProduct`/`mapVariant` path (`catalog/service.ts`), untouched by this phase. Making every product on a listing page call ERP live would risk exactly the kind of premature, unbounded-request-volume optimization problem this phase's own brief warns against (Step 8); building a bounded, TTL-documented projection instead is explicitly optional per the brief and was judged not yet necessary for the minimum safe foundation. **This means a product could show differently on the Shop grid than on its own cart-add validation** — an honest, named limitation, not a silently-accepted inconsistency.
-- **`Variant.inventoryQuantity` is still never written by anything.** This phase adds a live ERP *read* at two specific, bounded, high-stakes points (cart mutation, checkout confirmation) — it does not attempt to keep the local column in sync, which would require deciding a sync frequency/staleness policy (itself flagged as unnecessary complexity per Step 8/Step 9's "do not create redundant stock tables merely to mirror ERP").
-- **No queue, Redis, or caching layer was introduced.** Every ERP availability read this phase adds is a direct, synchronous, per-request call, bounded by the small number of lines in a cart or a checkout — never per-listing-page-product.
+- **Shop listing pages and search results remain exactly as they were** — still computed from Website-local `inventoryQuantity` only, via the shared `mapProduct`/`mapVariant`/listing path (`catalog/service.ts`), untouched by this phase. Making every product on a listing page call ERP live would risk exactly the kind of premature, unbounded-request-volume optimization problem this phase's own brief warns against (Step 8/§2 of the 9.5R review); a bounded, TTL-documented projection would be the eventual answer but is explicitly optional and was judged not yet necessary. **This means a product can show differently on the Shop grid than on its own PDP or cart-add validation** — an honest, named limitation, not a silently-accepted inconsistency. **The PDP itself was corrected in Phase 9.5R** (§19) to use a live, batched ERP overlay — per the review's explicit "PDP is more important than Shop if only one can be safely completed" instruction, since a single product page's variant count is always small and bounded (unlike a listing page's fan-out across many products).
+- **`Variant.inventoryQuantity` is still never written by anything.** This phase adds a live ERP *read* at bounded, high-stakes points (cart mutation, PDP display, checkout confirmation) — it does not attempt to keep the local column in sync, which would require deciding a sync frequency/staleness policy (itself flagged as unnecessary complexity per Step 8/Step 9's "do not create redundant stock tables merely to mirror ERP").
+- **No queue, Redis, or caching layer was introduced.** Every ERP availability read this phase adds is a direct, synchronous, per-request call, bounded by the small number of lines in a cart/checkout or variants on one product page — never per-listing-page-product.
+
+## 19. Phase 9.5R — review correction (authority, PDP, identity, cart fallback)
+
+Phase 9.5 was reviewed and returned four issues to correct.
+
+### 19.1 ERP as the ONLY authority (was: `min(local, ERP)`)
+
+**Finding**: the first draft combined ERP's answer with the Website-local `inventoryQuantity` via `Math.min()` — technically safe in the specific direction of never *exceeding* ERP's real number, but conceptually wrong: it treated local data as a second vote in the decision, which is exactly the "false second inventory authority" this phase's whole premise (§1) argues against.
+
+**Correction**: `fetchErpAvailability()`/`getVariantForPurchase()` (`catalog/inventory.ts`, `catalog/service.ts`) no longer reference the local number at all once ERP has answered. ERP's number is used alone. Local data is used only in the one case where no ERP answer exists to defer to (no `erpVariantId`) — not narrowed, not widened, not touched by any comparison. Verified directly by new tests: ERP=50/local=0 → 50 (`erp-inventory-checkout.test.ts`); ERP=0/local=100 → rejected as out of stock, not silently allowed through on the local count.
+
+### 19.2 Cart fallback no longer masquerades as verified stock
+
+**Finding**: on ERP failure, the first draft silently fell back to the Website-local number and clamped the customer's cart quantity against it — presenting unverified, stale data as if it were a real check.
+
+**Correction**: `AvailabilityState` (and the presentation-layer `ProductAvailability`) gained an explicit `"unknown"` value (Phase 9.5R). When ERP cannot be reached for a variant that does have an `erpVariantId`, `getVariantForPurchase()` returns `"unknown"`, and `cartService.addItem`/`updateQuantity` (`modules/cart/service.ts`) preserve the customer's requested quantity exactly, without clamping against local data. Final safety is still enforced at checkout, which remains fail-closed (§19.3 — unchanged from Phase 9.5, re-verified).
+
+### 19.3 Checkout fail-closed behavior — unchanged, re-verified
+
+No change was needed here; the first draft's checkout pre-check already never referenced local data in its insufficiency check. Re-verified directly (code inspection + the existing tests, now updated for the new adapter identity) that a checkout confirmation still fails closed (`CheckoutValidationError: availability_check_unavailable`) when ERP cannot be reached, and still does not eliminate the ERP/Website time-of-check-to-time-of-use race (§8/§12) — narrows it only, exactly as already documented; no reservation/commit API was invented.
+
+### 19.4 PDP now uses live ERP availability (Shop remains deferred)
+
+**Finding**: the first draft left the PDP on the same Website-local-only path as Shop listings.
+
+**Correction**: `catalogService.getProduct()` (the PDP's data source) now makes one batched ERP call per page load, covering every variant of that one product (always small, bounded — never the listing-page fan-out risk), and overlays ERP's number onto the page's displayed availability, again with no `min()` blending. Shop/search listings are unchanged and still local-only — named explicitly in §18, per the review's own "PDP is more important than Shop if only one can be safely completed" guidance.
+
+### 19.5 ERP Variant ID identity — the real fix, on the ERP side
+
+**Finding**: the Phase 9.5 adapter conceptually treated the Website's variant id as identity, but the ERP endpoint it called only accepted SKU on the wire — meaning the actual cross-system lookup was still SKU-dependent, and SKU is a mutable, ERP-owned business field (Phase 9.4R's own finding), not a stable identity. A SKU renamed in ERP between Website catalog syncs could make a real, in-stock variant look "not found."
+
+**Correction, made on the ERP side** (the smallest change proven necessary — see `erp-catalog-inventory-api.md` §18 for the full writeup): `POST /api/v1/integrations/website/inventory/availability` now also accepts `{ variantIds: string[] }`, composing the same, unmodified `getSellableAvailability()` (Phase 9.2) via a new, minimal id-keyed existence check. The Website's adapter (`erp-integration/inventory.ts`) was rewritten to use this exclusively — `sku` is not sent anywhere in the inventory path anymore. A regression test (`route.test.ts`, ERP repo) proves a variant looked up by id still resolves correctly after its SKU is renamed, and that the same lookup using the old SKU value would fail — demonstrating the exact bug this closes.
+
+### 19.6 Verification
+
+ERP repo: 19/19 tests in the affected route file (13 existing + 6 new), 70 passed/38 skipped full suite (pre-existing live-Postgres RLS tests, unrelated), `check:tenant-scope`/`typecheck`/`lint`/`build` all clean. Website repo: 140 passed/52 skipped full suite (up from 139/49 before this correction — 1 new unit test executed, 3 new integration tests written but skipped, matching this sandbox's disclosed no-Postgres limitation), `typecheck`/`lint`/`build` all clean.

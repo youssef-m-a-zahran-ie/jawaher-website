@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Phase 9.5 — ERP inventory adapter tests. Mirrors erp-catalog-adapter.test.ts's
- * exact pattern (env mocked per test, fetch stubbed globally, no real
- * network call, no real ERP touched).
+ * Phase 9.5, corrected in Phase 9.5R — ERP inventory adapter tests.
+ * Mirrors erp-catalog-adapter.test.ts's exact pattern (env mocked per
+ * test, fetch stubbed globally, no real network call, no real ERP
+ * touched). Uses the `variantIds` request shape exclusively — SKU is
+ * never sent by this adapter (Phase 9.5R correction; ERP's own stable
+ * variant id is the identity, never a mutable business field).
  */
 const BASE_ENV = {
   ERP_BASE_URL: "http://localhost:9999",
@@ -31,39 +34,35 @@ describe("erpInventoryAdapter.getAvailability", () => {
     vi.doUnmock("@/lib/env");
   });
 
-  it("returns availability keyed by the caller's own id, never by sku", async () => {
-    stubFetchOnce({ items: [{ sku: "SKU-1", available: 17 }], notFoundSkus: [] });
+  it("returns availability keyed by ERP's own variant id", async () => {
+    stubFetchOnce({ items: [{ variantId: "erp-v1", available: 17 }], notFoundVariantIds: [] });
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
 
-    const result = await erpInventoryAdapter.getAvailability([{ id: "website-variant-id-1", sku: "SKU-1" }]);
-    expect(result.availableById.get("website-variant-id-1")).toBe(17);
-    expect(result.availableById.has("SKU-1")).toBe(false);
+    const result = await erpInventoryAdapter.getAvailability(["erp-v1"]);
+    expect(result.availableById.get("erp-v1")).toBe(17);
   });
 
-  it("sends a POST with a JSON body containing exactly the requested SKUs, never the Website's internal ids", async () => {
+  it("sends a POST with a JSON body containing exactly { variantIds }, never a sku field", async () => {
     let capturedInit: RequestInit | undefined;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: string | URL, init?: RequestInit) => {
         capturedInit = init;
-        return new Response(JSON.stringify({ items: [], notFoundSkus: [] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [], notFoundVariantIds: [] }), { status: 200 });
       })
     );
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
 
-    await erpInventoryAdapter.getAvailability([
-      { id: "v1", sku: "SKU-1" },
-      { id: "v2", sku: "SKU-2" },
-    ]);
+    await erpInventoryAdapter.getAvailability(["v1", "v2"]);
 
     expect(capturedInit?.method).toBe("POST");
     const body = JSON.parse(String(capturedInit?.body));
-    expect(body).toEqual({ skus: ["SKU-1", "SKU-2"] });
-    expect(JSON.stringify(body)).not.toContain("v1");
-    expect(JSON.stringify(body)).not.toContain("v2");
+    expect(body).toEqual({ variantIds: ["v1", "v2"] });
+    expect(Object.keys(body)).not.toContain("skus");
+    expect(Object.keys(body)).not.toContain("sku");
   });
 
-  it("returns an empty map without calling fetch when given no variants", async () => {
+  it("returns an empty map without calling fetch when given no ids", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
@@ -73,21 +72,19 @@ describe("erpInventoryAdapter.getAvailability", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("omits a SKU ERP reports as not found from the result map, rather than defaulting it to a number", async () => {
-    stubFetchOnce({ items: [], notFoundSkus: ["SKU-1"] });
+  it("omits a variant id ERP reports as not found from the result map, rather than defaulting it to a number", async () => {
+    stubFetchOnce({ items: [], notFoundVariantIds: ["v1"] });
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
 
-    const result = await erpInventoryAdapter.getAvailability([{ id: "v1", sku: "SKU-1" }]);
+    const result = await erpInventoryAdapter.getAvailability(["v1"]);
     expect(result.availableById.has("v1")).toBe(false);
   });
 
   it("throws ErpInvalidInventoryResponseError on a malformed response", async () => {
-    stubFetchOnce({ items: [{ sku: "SKU-1" }], notFoundSkus: [] }); // missing `available`
+    stubFetchOnce({ items: [{ variantId: "v1" }], notFoundVariantIds: [] }); // missing `available`
     const { erpInventoryAdapter, ErpInvalidInventoryResponseError } = await loadAdapterWithEnv();
 
-    await expect(erpInventoryAdapter.getAvailability([{ id: "v1", sku: "SKU-1" }])).rejects.toBeInstanceOf(
-      ErpInvalidInventoryResponseError
-    );
+    await expect(erpInventoryAdapter.getAvailability(["v1"])).rejects.toBeInstanceOf(ErpInvalidInventoryResponseError);
   });
 
   it("propagates ErpAuthenticationError from the underlying client on a 401", async () => {
@@ -95,9 +92,7 @@ describe("erpInventoryAdapter.getAvailability", () => {
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
     const { ErpAuthenticationError } = await import("@/modules/erp-integration/client");
 
-    await expect(erpInventoryAdapter.getAvailability([{ id: "v1", sku: "SKU-1" }])).rejects.toBeInstanceOf(
-      ErpAuthenticationError
-    );
+    await expect(erpInventoryAdapter.getAvailability(["v1"])).rejects.toBeInstanceOf(ErpAuthenticationError);
   });
 
   it("propagates ErpTimeoutError from the underlying client", async () => {
@@ -117,7 +112,7 @@ describe("erpInventoryAdapter.getAvailability", () => {
     const { erpInventoryAdapter } = await loadAdapterWithEnv({ ERP_REQUEST_TIMEOUT_MS: 10 });
     const { ErpTimeoutError } = await import("@/modules/erp-integration/client");
 
-    await expect(erpInventoryAdapter.getAvailability([{ id: "v1", sku: "SKU-1" }])).rejects.toBeInstanceOf(ErpTimeoutError);
+    await expect(erpInventoryAdapter.getAvailability(["v1"])).rejects.toBeInstanceOf(ErpTimeoutError);
   });
 
   it("propagates ErpUnavailableError from the underlying client on a network failure", async () => {
@@ -130,28 +125,28 @@ describe("erpInventoryAdapter.getAvailability", () => {
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
     const { ErpUnavailableError } = await import("@/modules/erp-integration/client");
 
-    await expect(erpInventoryAdapter.getAvailability([{ id: "v1", sku: "SKU-1" }])).rejects.toBeInstanceOf(ErpUnavailableError);
+    await expect(erpInventoryAdapter.getAvailability(["v1"])).rejects.toBeInstanceOf(ErpUnavailableError);
   });
 
-  it("batches requests beyond the per-request SKU limit into multiple calls, still keyed by id", async () => {
+  it("batches requests beyond the per-request id limit into multiple calls", async () => {
     let callCount = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: string | URL, init?: RequestInit) => {
         callCount++;
-        const { skus } = JSON.parse(String(init?.body)) as { skus: string[] };
+        const { variantIds } = JSON.parse(String(init?.body)) as { variantIds: string[] };
         return new Response(
-          JSON.stringify({ items: skus.map((sku) => ({ sku, available: 1 })), notFoundSkus: [] }),
+          JSON.stringify({ items: variantIds.map((variantId) => ({ variantId, available: 1 })), notFoundVariantIds: [] }),
           { status: 200 }
         );
       })
     );
     const { erpInventoryAdapter } = await loadAdapterWithEnv();
 
-    const variants = Array.from({ length: 250 }, (_, i) => ({ id: `v${i}`, sku: `SKU-${i}` }));
-    const result = await erpInventoryAdapter.getAvailability(variants);
+    const ids = Array.from({ length: 250 }, (_, i) => `v${i}`);
+    const result = await erpInventoryAdapter.getAvailability(ids);
 
-    expect(callCount).toBe(2); // 200 + 50, matching the endpoint's own 200-SKU limit
+    expect(callCount).toBe(2); // 200 + 50, matching the endpoint's own 200-id limit
     expect(result.availableById.get("v0")).toBe(1);
     expect(result.availableById.get("v249")).toBe(1);
   });

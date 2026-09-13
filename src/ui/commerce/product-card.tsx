@@ -15,6 +15,8 @@ const AVAILABILITY_BADGE: Record<string, { label: string; variant: "warning" | "
   in_stock: null,
   low_stock: { label: "ينفد قريبًا", variant: "warning" },
   out_of_stock: { label: "غير متوفر حاليًا", variant: "neutral" },
+  /** Phase 9.5R — not currently reachable here (listing pages don't call ERP yet, audit §18), kept for consistency with the type. */
+  unknown: { label: "يتعذر التحقق من التوفر حاليًا", variant: "neutral" },
 };
 
 /**
@@ -32,7 +34,8 @@ const AVAILABILITY_BADGE: Record<string, { label: string; variant: "warning" | "
  */
 export function ProductCard({ product, className }: ProductCardProps) {
   const isOutOfStock = product.availability === "out_of_stock";
-  const canQuickAdd = !product.hasMultipleVariants && !isOutOfStock;
+  // Phase 9.5R: quick-add requires a CONFIRMED stock state — "unknown" (ERP unverified) must never be treated as purchasable-by-default, the same way "out_of_stock" already isn't.
+  const canQuickAdd = !product.hasMultipleVariants && (product.availability === "in_stock" || product.availability === "low_stock");
   const availabilityBadge = AVAILABILITY_BADGE[product.availability];
 
   return (
