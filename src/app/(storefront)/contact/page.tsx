@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { PageContainer } from "@/ui/primitives/page-container";
 import { ContactForm } from "./contact-form";
 
-export const metadata: Metadata = { title: "تواصل معنا" };
+export const metadata: Metadata = { title: "تواصل معنا", alternates: { canonical: "/contact" } };
 
 /**
  * No phone/email/address is shown — none exist in _reference/business/

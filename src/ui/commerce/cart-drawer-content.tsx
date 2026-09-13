@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Minus, Plus, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import { Money } from "@/domain/money";
 import { track } from "@/lib/analytics";
 import { formatPrice } from "@/lib/format-price";
+import { QuantityControl } from "@/ui/commerce/quantity-control";
 import { Button } from "@/ui/primitives/button";
 import { EmptyState } from "@/ui/primitives/empty-state";
 import { ErrorState } from "@/ui/primitives/error-state";
@@ -201,25 +202,13 @@ export function CartDrawerContent({ open, onClose }: { open: boolean; onClose: (
               {note && <p className="text-caption text-warning">{note}</p>}
 
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <IconButton
-                    icon={<Minus className="size-3.5" />}
-                    aria-label="تقليل الكمية"
-                    size="sm"
-                    disabled={isMutating}
-                    onClick={() => void updateQuantity(line.variantId, line.quantity - 1)}
-                  />
-                  <span className="w-6 text-center text-body font-bold tabular-nums" aria-live="polite">
-                    {line.quantity}
-                  </span>
-                  <IconButton
-                    icon={<Plus className="size-3.5" />}
-                    aria-label="زيادة الكمية"
-                    size="sm"
-                    disabled={isMutating}
-                    onClick={() => void updateQuantity(line.variantId, line.quantity + 1)}
-                  />
-                </div>
+                <QuantityControl
+                  value={line.quantity}
+                  onChange={(next) => void updateQuantity(line.variantId, next)}
+                  min={0}
+                  max={99}
+                  disabled={isMutating}
+                />
                 <span className="text-body font-bold text-text-primary tabular-nums">
                   {formatPrice(Money.fromMinor(line.lineTotal.amountMinor, line.lineTotal.currency))}
                 </span>

@@ -10,6 +10,7 @@ import { PageContainer } from "@/ui/primitives/page-container";
 export const metadata: Metadata = {
   title: "المتجر",
   description: "تسوق كل منتجات جواهر الخير — تمور، عسل، زيوت، مكسرات وسمن.",
+  alternates: { canonical: "/shop" },
 };
 
 /**

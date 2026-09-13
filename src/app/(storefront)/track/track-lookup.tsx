@@ -84,12 +84,14 @@ export function TrackLookup() {
       if (!res.ok || !body.data) {
         setError(body.error?.message_ar ?? "تعذّر العثور على الطلب.");
         setOrder(null);
-        return;
+        return false;
       }
       setOrder(body.data.order);
+      return true;
     } catch {
       setError("تعذّر البحث — تحقق من الاتصال.");
       setOrder(null);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -97,7 +99,8 @@ export function TrackLookup() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    await runLookup(orderNumber.trim(), phone.trim());
+    const found = await runLookup(orderNumber.trim(), phone.trim());
+    if (found) track("order_tracked");
   }
 
   async function handleConfirmCancel() {

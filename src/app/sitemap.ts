@@ -17,6 +17,12 @@ const POLICY_SLUGS = ["shipping", "returns", "payment", "privacy", "terms"];
  * that. Add product URLs here once real (non-suffixed) catalog content
  * exists, not merely once a real pipe exists. /account and /search are
  * excluded too (not indexable content pages).
+ *
+ * Phase 11: this sitemap exclusion alone never stopped a crawler reaching
+ * a PDP via Shop/Category/Search/Home's own internal links to it — closed
+ * with a page-level `robots: {index:false}` on `/product/[slug]` itself
+ * (that page's own `generateMetadata`), removed at the same trigger named
+ * above.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();

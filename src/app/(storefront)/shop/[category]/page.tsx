@@ -9,6 +9,7 @@ import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Breadcrumb } from "@/ui/primitives/breadcrumb";
 import { EmptyState } from "@/ui/primitives/empty-state";
 import { PageContainer } from "@/ui/primitives/page-container";
+import { ViewTracker } from "@/ui/primitives/view-tracker";
 import { JsonLd } from "@/ui/structured-data";
 
 type PageProps = { params: Promise<{ category: string }> };
@@ -31,7 +32,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { category: slug } = await params;
   const category = getCategoryBySlug(slug);
   if (!category) return {};
-  return { title: category.name, description: category.description };
+  return { title: category.name, description: category.description, alternates: { canonical: `/shop/${slug}` } };
 }
 
 /**
@@ -60,6 +61,7 @@ export default async function CategoryPage({ params }: PageProps) {
   return (
     <PageContainer className="py-10">
       <JsonLd data={breadcrumbJsonLd(breadcrumbItems)} />
+      <ViewTracker event="view_category" params={{ category: category.slug }} />
       <Breadcrumb items={breadcrumbItems} />
       <h1 className="mb-2 mt-4 text-h1 font-extrabold text-text-primary">{category.name}</h1>
       <p className="mb-8 max-w-xl text-body text-text-secondary">{category.description}</p>

@@ -10,8 +10,14 @@ import { Input } from "@/ui/primitives/input";
 import { Label } from "@/ui/primitives/label";
 import { Link } from "@/ui/primitives/link";
 import { PageContainer } from "@/ui/primitives/page-container";
+import { ViewTracker } from "@/ui/primitives/view-tracker";
 
-export const metadata: Metadata = { title: "بحث" };
+export const metadata: Metadata = {
+  title: "بحث",
+  alternates: { canonical: "/search" },
+  // Query-driven results pages are thin/duplicate content by nature — standard practice, not a content decision.
+  robots: { index: false, follow: true },
+};
 
 type PageProps = { searchParams: Promise<{ q?: string }> };
 
@@ -47,6 +53,7 @@ export default async function SearchPage({ searchParams }: PageProps) {
 
   return (
     <PageContainer className="py-10">
+      {query && <ViewTracker event="search" params={{ query, results_count: results.length }} />}
       <h1 className="mb-6 text-h1 font-extrabold text-text-primary">البحث</h1>
 
       <form method="GET" className="mb-10 flex max-w-md items-end gap-2">

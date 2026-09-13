@@ -5,13 +5,20 @@ import { PageContainer } from "@/ui/primitives/page-container";
 import { Skeleton } from "@/ui/primitives/skeleton";
 import { TrackLookup } from "./track-lookup";
 
-export const metadata: Metadata = { title: "تتبع الطلب" };
+export const metadata: Metadata = {
+  title: "تتبع الطلب",
+  alternates: { canonical: "/track" },
+  robots: { index: false, follow: false },
+};
 
 /**
  * Phase 9.7 — `GET /api/v1/orders/track` existed with zero frontend
  * consumer (only a guest-order-tracking API, never a page); this is that
  * page. `useSearchParams` (for a confirmation-page deep link) requires a
  * Suspense boundary per Next.js App Router.
+ *
+ * Phase 11 — page-level `robots: {index:false}` added; see checkout/
+ * page.tsx's comment on why (previously robots.ts's disallow list alone).
  */
 export default function TrackPage() {
   return (

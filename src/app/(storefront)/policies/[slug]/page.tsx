@@ -23,7 +23,7 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const title = POLICIES[slug];
-  return title ? { title } : {};
+  return title ? { title, alternates: { canonical: `/policies/${slug}` } } : {};
 }
 
 /**

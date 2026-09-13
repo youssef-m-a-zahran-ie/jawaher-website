@@ -397,6 +397,9 @@ All content in this section must be business-supplied and factual — nothing he
 | Search performed | `search` | New — GA4-standard name, natural gap given §8 |
 | Search result clicked | `select_item` with `list_name: search_results` | Reuses `select_item`, no new event |
 | Order cancelled by customer (post-purchase, via /track) | `order_cancelled` | New — Phase 9.7, no existing event fit a post-purchase cancellation (`checkout_abandoned` is pre-purchase only) |
+| Checkout submission rejected (validation/business-rule/ERP error, not just abandoned) | `checkout_failed` (param: reason) | New — Phase 11, `checkout_abandoned` only covers leaving the flow, not a submission the server actively rejected — this is "where checkout fails," an explicit measurement goal |
+| Category page viewed | `view_category` (param: category) | Canonical — declared in the event union since Phase 3 but never actually fired until Phase 11 |
+| Guest order tracking lookup succeeds (via /track) | `order_tracked` | New — Phase 11, distinct from `order_cancelled`; measures how often the tracking feature is actually used |
 | OTP requested/verified/failed | *(not a product analytics event)* | Security-sensitive — belongs in server-side auth logs, deliberately excluded from client analytics |
 
 This table stays intentionally minimal — it does not design the analytics architecture (that is blueprint §14's job); it only tells frontend implementation which interaction fires which event.

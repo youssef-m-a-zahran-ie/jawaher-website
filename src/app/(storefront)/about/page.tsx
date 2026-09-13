@@ -5,7 +5,7 @@ import { EmptyState } from "@/ui/primitives/empty-state";
 import { Link } from "@/ui/primitives/link";
 import { PageContainer } from "@/ui/primitives/page-container";
 
-export const metadata: Metadata = { title: "من نحن" };
+export const metadata: Metadata = { title: "من نحن", alternates: { canonical: "/about" } };
 
 /**
  * "Content supplied by business, not invented" (requirements §2). What's

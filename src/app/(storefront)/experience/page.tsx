@@ -14,6 +14,7 @@ import { PageContainer } from "@/ui/primitives/page-container";
 export const metadata: Metadata = {
   title: "تجربة المنتجات",
   description: "تمور، عسل، زيوت، مكسرات وسمن — قصة كل فئة من جواهر الخير.",
+  alternates: { canonical: "/experience" },
 };
 
 /**

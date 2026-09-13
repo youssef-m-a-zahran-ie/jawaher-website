@@ -5,7 +5,11 @@ import { EmptyState } from "@/ui/primitives/empty-state";
 import { Link } from "@/ui/primitives/link";
 import { PageContainer } from "@/ui/primitives/page-container";
 
-export const metadata: Metadata = { title: "الحساب" };
+export const metadata: Metadata = {
+  title: "الحساب",
+  alternates: { canonical: "/account" },
+  robots: { index: false, follow: false },
+};
 
 /**
  * A minimal, honest placeholder — Login/OTP/Account (requirements §10) is

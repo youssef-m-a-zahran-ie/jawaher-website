@@ -208,6 +208,7 @@ export function CheckoutFlow() {
       const body = (await res.json()) as ApiEnvelope<{ order: OrderSummaryJson }>;
       if (!res.ok || !body.data) {
         setPlaceError(body.error?.message_ar ?? "تعذّر إتمام الطلب.");
+        track("checkout_failed", { reason: body.error?.code ?? "unknown" });
         return;
       }
       setConfirmedOrder(body.data.order);
@@ -219,6 +220,7 @@ export function CheckoutFlow() {
       });
     } catch {
       setPlaceError("تعذّر إتمام الطلب — تحقق من الاتصال.");
+      track("checkout_failed", { reason: "network_error" });
     } finally {
       setPlacing(false);
     }

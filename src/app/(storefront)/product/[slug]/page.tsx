@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { formatPrice } from "@/lib/format-price";
 import { breadcrumbJsonLd } from "@/lib/structured-data";
 import { catalogService } from "@/modules/catalog";
 import { pickPrimaryVariant, toProductCardDataList } from "@/ui/commerce/catalog-adapters";
@@ -38,7 +39,20 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug } = await params;
   const product = await catalogService.getProduct(slug);
   if (!product) return {};
-  return { title: product.name, description: `${product.name} — ${product.category.name}، جواهر الخير.` };
+  return {
+    title: product.name,
+    description: `${product.name} — ${product.category.name}، جواهر الخير.`,
+    alternates: { canonical: `/product/${slug}` },
+    // Phase 11 — closes a real gap sitemap.ts's own exclusion left open:
+    // PDP pages ARE fully linked from Shop/Category/Search/Home grids, so
+    // omitting them from the sitemap alone never stopped a crawler from
+    // discovering and indexing them via those internal links — while the
+    // seeded content still carries the "(اسم تجريبي)" placeholder suffix
+    // (sitemap.ts's own stated reason), that's exactly what should not be
+    // indexed. Remove this once real, non-suffixed catalog content exists
+    // (the same trigger sitemap.ts's own comment already names).
+    robots: { index: false, follow: true },
+  };
 }
 
 const AVAILABILITY_LABEL: Record<string, { label: string; variant: "success" | "warning" | "neutral" }> = {
@@ -51,11 +65,13 @@ const AVAILABILITY_LABEL: Record<string, { label: string; variant: "success" | "
 
 /**
  * A foundation-level PDP, not the full spec in
- * docs/ux/ux-specification.md §7 (no real gallery/variant chips/sticky
- * add-to-cart bar — those need real product media, still absent per
- * catalog-inventory-gap-analysis.md, and a full variant-picker UI this
- * phase's brief explicitly excludes). Reuses every applicable approved
- * primitive, unchanged.
+ * docs/ux/ux-specification.md §7 (no real gallery/variant chips — those
+ * need real product media, still absent per
+ * catalog-inventory-gap-analysis.md, and a full variant-picker UI prior
+ * phases explicitly excluded). Reuses every applicable approved
+ * primitive, unchanged. Phase 11 added the mobile sticky add-to-cart bar
+ * (product-actions.tsx) — that piece didn't actually depend on either
+ * missing thing.
  *
  * Phase 9.1 — the top-of-page price/availability/add-to-cart section is
  * shown for the product's "primary" variant (first active, else first at
@@ -110,6 +126,7 @@ export default async function ProductPage({ params }: PageProps) {
               category={product.category.name}
               availability={primary.availability}
               hasMultipleVariants={product.hasMultipleVariants}
+              priceLabel={formatPrice(primary.price)}
             />
           </div>
 
