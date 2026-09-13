@@ -15,7 +15,15 @@
 
 export type CurrencyCode = "EGP";
 
-const MINOR_UNITS_PER_MAJOR_UNIT: Record<CurrencyCode, number> = {
+/**
+ * Exported (not just an internal const) so other modules that need to
+ * convert a currency's major-unit value into minor units — e.g. the ERP
+ * catalog sync (src/modules/catalog-sync/mapper.ts), which receives
+ * prices at a different decimal precision than this class's own
+ * `fromDecimalString()` accepts — derive the minor-unit scale from this
+ * one canonical definition instead of hardcoding a second "100" elsewhere.
+ */
+export const MINOR_UNITS_PER_MAJOR_UNIT: Record<CurrencyCode, number> = {
   EGP: 100,
 };
 

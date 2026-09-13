@@ -88,7 +88,15 @@ model Product {
 model Variant {
   id                   String   @id @default(uuid())
   productId            String
-  /// Global identity used everywhere else (cart items, order item snapshots) — never the product id.
+  /// Reference only, never the primary key — mirrors Product.erpProductId's
+  /// convention exactly. Added Phase 9.4R: the ERP Catalog API's variant
+  /// DTO carries its own stable `id` (erp-catalog-inventory-api.md §7)
+  /// which was already being fetched and validated but not used for sync
+  /// identity — see website-erp-catalog-sync.md §7 for why matching on
+  /// this, not `sku`, is required (a SKU rename in ERP must update the
+  /// existing Website row, never create a duplicate one).
+  erpVariantId         String?  @unique
+  /// Global identity used everywhere else (cart items, order item snapshots) — never the product id. ERP-owned (synced from ERP), but NOT the sync identity — see erpVariantId above.
   sku                  String   @unique
   /// Human-readable size/weight label (e.g. "500 جم") — deliberately not a
   /// generalized option/value system. See commerce-completeness-audit.md §2.

@@ -102,7 +102,7 @@ async function syncOneProduct(
 
 interface FetchPagesResult {
   seenErpProductIds: string[];
-  seenSkus: string[];
+  seenErpVariantIds: string[];
 }
 
 async function fetchAndUpsertAllPages(
@@ -112,7 +112,7 @@ async function fetchAndUpsertAllPages(
   filter: { status?: "active" | "discontinued" | "archived"; updatedSince?: Date } = {}
 ): Promise<FetchPagesResult> {
   const seenErpProductIds: string[] = [];
-  const seenSkus: string[] = [];
+  const seenErpVariantIds: string[] = [];
   let skip = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
     const { products, pagination } = await erpCatalogAdapter.listProducts(
@@ -122,7 +122,7 @@ async function fetchAndUpsertAllPages(
     counters.productsFetched += products.length;
     for (const erpProduct of products) {
       seenErpProductIds.push(erpProduct.id);
-      for (const variant of erpProduct.variants) seenSkus.push(variant.sku);
+      for (const variant of erpProduct.variants) seenErpVariantIds.push(variant.id);
       await syncOneProduct(erpProduct, categoryIdByErpId, counters);
     }
     if (!pagination.hasMore) break;
@@ -131,7 +131,7 @@ async function fetchAndUpsertAllPages(
       throw new Error(`catalog-sync: exceeded MAX_PAGES (${MAX_PAGES}) — aborting to avoid unbounded work`);
     }
   }
-  return { seenErpProductIds, seenSkus };
+  return { seenErpProductIds, seenErpVariantIds };
 }
 
 async function runSync(
@@ -177,9 +177,9 @@ async function runSync(
 export async function runFullSync(): Promise<SyncOutcome> {
   return runSync("FULL", async (correlationId, counters) => {
     const categoryIdByErpId = await syncCategories(correlationId, counters);
-    const { seenErpProductIds, seenSkus } = await fetchAndUpsertAllPages(correlationId, categoryIdByErpId, counters);
+    const { seenErpProductIds, seenErpVariantIds } = await fetchAndUpsertAllPages(correlationId, categoryIdByErpId, counters);
     counters.productsDeactivated = await deactivateMissingProducts(seenErpProductIds);
-    counters.variantsDeactivated = await deactivateMissingVariants(seenSkus);
+    counters.variantsDeactivated = await deactivateMissingVariants(seenErpVariantIds);
   });
 }
 

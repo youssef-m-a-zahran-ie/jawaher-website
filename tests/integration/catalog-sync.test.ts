@@ -168,8 +168,39 @@ describe.skipIf(!dbAvailable)("Website ERP catalog sync (Phase 9.4)", () => {
 
     const rows = await db.product.findMany({ where: { erpProductId: product.id } });
     expect(rows).toHaveLength(1);
-    const variantRows = await db.variant.findMany({ where: { sku: product.variants[0]?.sku } });
+    const variantRows = await db.variant.findMany({ where: { erpVariantId: product.variants[0]?.id } });
     expect(variantRows).toHaveLength(1);
+  });
+
+  it("IDENTITY (9.4R): the same ERP Variant ID always maps to the same Website variant row, even when its SKU changes", async () => {
+    mockErpEnv();
+    const category = erpCategory("vident", `فئة ${runId}`);
+    const product = erpProduct("vident", category.id);
+    const erpVariantId = product.variants[0]!.id;
+    fakeErpServer({ categories: [category], productPages: [[product]] });
+    const { runFullSync } = await import("@/modules/catalog-sync/service");
+    const { db } = await import("@/lib/db");
+    await runFullSync();
+
+    const firstRow = await db.variant.findUnique({ where: { erpVariantId } });
+    expect(firstRow).not.toBeNull();
+    const websiteVariantId = firstRow!.id;
+
+    // ERP renames the SKU on the SAME variant (same erpVariantId).
+    mockErpEnv();
+    const renamedProduct = { ...product, variants: [{ ...product.variants[0]!, sku: `SKU-${runId}-RENAMED` }] };
+    fakeErpServer({ categories: [category], productPages: [[renamedProduct]] });
+    const { runFullSync: runFullSync2 } = await import("@/modules/catalog-sync/service");
+    await runFullSync2();
+
+    // Same Website row (same internal id), updated SKU, no duplicate created.
+    const afterRename = await db.variant.findUnique({ where: { erpVariantId } });
+    expect(afterRename?.id).toBe(websiteVariantId);
+    expect(afterRename?.sku).toBe(`SKU-${runId}-RENAMED`);
+    const allVariantsForThisErpId = await db.variant.findMany({ where: { erpVariantId } });
+    expect(allVariantsForThisErpId).toHaveLength(1);
+    const oldSkuRow = await db.variant.findUnique({ where: { sku: product.variants[0]!.sku } });
+    expect(oldSkuRow).toBeNull(); // the old SKU value is gone, not a second row
   });
 
   it("updates an existing product's ERP-owned fields (name/status/price) without touching website-owned fields (description/slug/label)", async () => {
@@ -221,6 +252,34 @@ describe.skipIf(!dbAvailable)("Website ERP catalog sync (Phase 9.4)", () => {
     const row = await db.product.findUnique({ where: { erpProductId: product.id } });
     expect(row?.status).toBe("DISCONTINUED");
     expect(outcome.counters.productsDeactivated).toBeGreaterThanOrEqual(1);
+  });
+
+  it("full-sync sweep deactivates a single variant (active: false) that no longer appears on its still-active parent product", async () => {
+    mockErpEnv();
+    const category = erpCategory("vsweep", `فئة ${runId}`);
+    const product = erpProduct("vsweep", category.id, {
+      variants: [
+        { id: `${runId}-vsweep-v1`, sku: `SKU-${runId}-vsweep-1`, barcode: null, status: "active", sellingPrice: "10.0000", packQuantity: "1.0000" },
+        { id: `${runId}-vsweep-v2`, sku: `SKU-${runId}-vsweep-2`, barcode: null, status: "active", sellingPrice: "20.0000", packQuantity: "1.0000" },
+      ],
+    });
+    fakeErpServer({ categories: [category], productPages: [[product]] });
+    const { runFullSync } = await import("@/modules/catalog-sync/service");
+    const { db } = await import("@/lib/db");
+    await runFullSync();
+
+    // Second full sync: the product still exists, but ERP no longer lists its second variant.
+    mockErpEnv();
+    const narrowedProduct = { ...product, variants: [product.variants[0]!] };
+    fakeErpServer({ categories: [category], productPages: [[narrowedProduct]] });
+    const { runFullSync: runFullSync2 } = await import("@/modules/catalog-sync/service");
+    const outcome = await runFullSync2();
+
+    const kept = await db.variant.findUnique({ where: { erpVariantId: `${runId}-vsweep-v1` } });
+    const dropped = await db.variant.findUnique({ where: { erpVariantId: `${runId}-vsweep-v2` } });
+    expect(kept?.active).toBe(true);
+    expect(dropped?.active).toBe(false);
+    expect(outcome.counters.variantsDeactivated).toBeGreaterThanOrEqual(1);
   });
 
   it("does NOT deactivate a seed/manual product that has no erpProductId at all (sweep is scoped to ERP-managed rows only)", async () => {

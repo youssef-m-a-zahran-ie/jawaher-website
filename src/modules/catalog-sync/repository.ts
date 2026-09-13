@@ -140,34 +140,40 @@ export async function upsertProduct(
 }
 
 /**
- * Variant: ERP-owned `active` status is always overwritten. `priceAmountMinor`
- * (ERP-owned) is overwritten only when ERP actually returned a price — a
- * null ERP price is real data ("not yet priced"), never faked as 0, and on
- * create with no price at all the variant is skipped entirely (see
- * service.ts) rather than writing a fabricated 0 into a NOT NULL column.
- * `label` (website-owned presentation, but NOT NULL) uses the fallback
- * only at creation and is never overwritten afterwards.
- * `compareAtAmountMinor`/`currency`/`inventoryQuantity`/`sortOrder` are
- * strictly never touched here (website/promotions-owned or, for
- * inventory, this phase's explicit non-goal).
+ * Variant: matched on `erpVariantId` — NOT `sku` (Phase 9.4R correction;
+ * see mapper.ts's own header comment and website-erp-catalog-sync.md §5/§7).
+ * ERP-owned `sku` and `active` status are always overwritten (a SKU
+ * rename in ERP updates this same row, never creates a duplicate).
+ * `priceAmountMinor` (ERP-owned) is overwritten only when ERP actually
+ * returned a price — a null ERP price is real data ("not yet priced"),
+ * never faked as 0, and on create with no price at all the variant is
+ * skipped entirely (see service.ts) rather than writing a fabricated 0
+ * into a NOT NULL column. `label` (website-owned/derived presentation,
+ * but NOT NULL) uses the fallback only at creation and is never
+ * overwritten afterwards. `compareAtAmountMinor`/`currency`/
+ * `inventoryQuantity`/`sortOrder` are strictly never touched here
+ * (website/promotions-owned convention or, for inventory, this phase's
+ * explicit non-goal).
  */
 export async function upsertVariant(
   mapped: MappedVariant,
   productId: string,
   client: Db = db
 ): Promise<{ id: string; wasCreated: boolean } | null> {
-  const existing = await client.variant.findUnique({ where: { sku: mapped.sku }, select: { id: true } });
+  const existing = await client.variant.findUnique({ where: { erpVariantId: mapped.erpVariantId }, select: { id: true } });
   if (existing === null && mapped.priceAmountMinor === null) {
     // Cannot create a NOT NULL priceAmountMinor row with no real ERP price — skip, don't fabricate.
     return null;
   }
   const row = await client.variant.upsert({
-    where: { sku: mapped.sku },
+    where: { erpVariantId: mapped.erpVariantId },
     update: {
+      sku: mapped.sku,
       active: mapped.active,
       ...(mapped.priceAmountMinor !== null ? { priceAmountMinor: mapped.priceAmountMinor } : {}),
     },
     create: {
+      erpVariantId: mapped.erpVariantId,
       sku: mapped.sku,
       productId,
       active: mapped.active,
@@ -193,16 +199,10 @@ export async function deactivateMissingProducts(seenErpProductIds: string[], cli
   return result.count;
 }
 
-export async function deactivateMissingVariants(seenSkus: string[], client: Db = db): Promise<number> {
-  const erpManagedProducts = await client.product.findMany({
-    where: { erpProductId: { not: null } },
-    select: { id: true },
-  });
-  if (erpManagedProducts.length === 0) return 0;
+export async function deactivateMissingVariants(seenErpVariantIds: string[], client: Db = db): Promise<number> {
   const result = await client.variant.updateMany({
     where: {
-      productId: { in: erpManagedProducts.map((p) => p.id) },
-      sku: { notIn: seenSkus },
+      erpVariantId: { not: null, notIn: seenErpVariantIds },
       active: true,
     },
     data: { active: false },

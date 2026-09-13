@@ -8,6 +8,7 @@ import {
   isErpVariantActive,
   mapErpCategory,
   mapErpProduct,
+  mapErpVariant,
 } from "@/modules/catalog-sync/mapper";
 
 /**
@@ -114,11 +115,29 @@ describe("mapErpCategory / mapErpProduct — composition", () => {
     });
     expect(mapped.status).toBe("ACTIVE");
     expect(mapped.variants[0]).toEqual({
+      erpVariantId: "v1",
       sku: "SKU-1",
       active: true,
       priceAmountMinor: 18500,
       fallbackLabel: "0.5 kg",
     });
+  });
+
+  it("mapErpVariant uses the ERP variant id as the sync identity, distinct from (and never derived from) the SKU", () => {
+    const mapped = mapErpVariant(
+      { id: "v-stable-id", sku: "SKU-ORIGINAL", barcode: null, status: "active", sellingPrice: "50.0000", packQuantity: "1.0000" },
+      "kg"
+    );
+    expect(mapped.erpVariantId).toBe("v-stable-id");
+    expect(mapped.sku).toBe("SKU-ORIGINAL");
+
+    // Same erpVariantId, renamed SKU — identity must stay tied to erpVariantId.
+    const renamed = mapErpVariant(
+      { id: "v-stable-id", sku: "SKU-RENAMED", barcode: null, status: "active", sellingPrice: "50.0000", packQuantity: "1.0000" },
+      "kg"
+    );
+    expect(renamed.erpVariantId).toBe(mapped.erpVariantId);
+    expect(renamed.sku).toBe("SKU-RENAMED");
   });
 
   it("maps a null sellingPrice to a null priceAmountMinor — never fabricated as 0", () => {
