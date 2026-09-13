@@ -5,8 +5,8 @@ import { IdempotencyConflictError, IdempotencyScopeMismatchError } from "@/lib/i
 import { logger } from "@/lib/logger";
 import { CartItemUnavailableError } from "@/modules/cart";
 import { InsufficientInventoryError } from "@/modules/catalog";
-import { CheckoutValidationError, CouponRejectedError } from "@/modules/checkout";
-import { OrderAuthorizationError, OrderNotFoundError } from "@/modules/orders";
+import { CheckoutValidationError, CouponRejectedError, CheckoutAuthorizationError } from "@/modules/checkout";
+import { OrderAlreadyCancelledError, OrderAuthorizationError, OrderNotFoundError } from "@/modules/orders";
 import { ErpOrderRejectedError } from "@/modules/erp-integration";
 import { OtpInvalidError, OtpRateLimitedError } from "@/modules/customers";
 import { OnlinePaymentNotConfiguredError } from "@/modules/payments";
@@ -60,6 +60,15 @@ export function mapDomainErrorToApiResponse(error: unknown): NextResponse<ApiErr
   if (error instanceof OrderNotFoundError || error instanceof OrderAuthorizationError) {
     // Never reveal that an order exists but belongs to someone else — technical-architecture.md §22's authorization row.
     return apiError("not_found", "order_not_found", "لم يتم العثور على الطلب.");
+  }
+
+  if (error instanceof CheckoutAuthorizationError) {
+    // Same anti-enumeration discipline as Order above — never distinguish "doesn't exist" from "not yours".
+    return apiError("not_found", "checkout_session_not_found", "لم يتم العثور على عملية الشراء هذه.");
+  }
+
+  if (error instanceof OrderAlreadyCancelledError) {
+    return apiError("conflict", "order_already_cancelled", "هذا الطلب ملغى بالفعل.");
   }
 
   if (error instanceof ErpOrderRejectedError) {

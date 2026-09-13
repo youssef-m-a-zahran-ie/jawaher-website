@@ -75,6 +75,7 @@ describe("toProductCardData", () => {
       compareAtPrice: variant.compareAtPrice,
       availability: "in_stock",
       hasMultipleVariants: false,
+      primaryVariantId: variant.id,
       imageAlt: `صورة المنتج — ${product.name}`,
     });
   });
@@ -104,6 +105,17 @@ describe("toProductCardData", () => {
     expect(card?.price).toEqual(real.price);
     expect(card?.availability).toBe("in_stock");
     expect(card?.hasMultipleVariants).toBe(true);
+    expect(card?.primaryVariantId).toBe("v-2");
+  });
+
+  it("primaryVariantId is the real Variant.id, never the parent Product.id (Phase 9.7 quick-add fix)", () => {
+    const variant = makeVariant({ id: "the-real-variant-id" });
+    const product = makeProduct({ id: "the-product-id", variants: [variant] });
+
+    const card = toProductCardData(product);
+
+    expect(card?.id).toBe("the-product-id");
+    expect(card?.primaryVariantId).toBe("the-real-variant-id");
   });
 });
 

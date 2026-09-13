@@ -14,6 +14,10 @@ export const metadata: Metadata = { title: "الحساب" };
  * mobile-drawer account entry point (docs/ux/ux-specification.md §3's
  * "account/login entry") doesn't 404 rather than because this phase
  * builds accounts.
+ *
+ * Phase 9.7: points to /track — a guest with no account can still find an
+ * order's status without logging in, so this dead-end at least offers the
+ * one real thing available today, instead of only "continue shopping".
  */
 export default function AccountPage() {
   return (
@@ -21,11 +25,16 @@ export default function AccountPage() {
       <EmptyState
         icon={<UserRound className="size-10" />}
         title="تسجيل الدخول والحساب الشخصي"
-        description="هذه الميزة قيد التطوير وستتوفر قريبًا."
+        description="هذه الميزة قيد التطوير وستتوفر قريبًا. لمعرفة حالة طلب سابق، استخدم تتبع الطلب."
         action={
-          <Link href="/shop" variant="secondary">
-            متابعة التسوق
-          </Link>
+          <div className="flex gap-3">
+            <Link href="/track" variant="primary">
+              تتبع الطلب
+            </Link>
+            <Link href="/shop" variant="secondary">
+              متابعة التسوق
+            </Link>
+          </div>
         }
       />
     </PageContainer>

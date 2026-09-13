@@ -30,6 +30,15 @@ export type ProductCardData = {
   availability: ProductAvailability;
   /** Quick-add is only offered for single-SKU products (requirements COM-004). */
   hasMultipleVariants: boolean;
+  /**
+   * Phase 9.7 — the real `Variant.id` `POST /api/v1/cart/items` actually
+   * keys on, NOT `id` above (which is the parent Product's id — see
+   * catalog-adapters.ts's own comment on why those must never be
+   * conflated). Card-level quick-add only ever targets this one variant
+   * (the same one `price`/`availability` above describe), so this is
+   * unambiguous even for a multi-variant product's card.
+   */
+  primaryVariantId: string;
   imageAlt: string;
   badge?: { label: string; variant: BadgeVariant };
 };

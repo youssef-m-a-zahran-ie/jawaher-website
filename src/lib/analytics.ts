@@ -33,6 +33,7 @@ export type AnalyticsEvent =
   | "coupon_applied"
   | "delivery_option_selected"
   | "checkout_abandoned"
+  | "order_cancelled"
   | "product_experience_started"
   | "product_experience_chapter_viewed"
   | "product_experience_cta_clicked"

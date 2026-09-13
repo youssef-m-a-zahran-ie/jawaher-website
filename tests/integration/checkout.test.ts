@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { db } from "@/lib/db";
 import { cartService } from "@/modules/cart";
-import { checkoutService, CheckoutValidationError } from "@/modules/checkout";
+import { checkoutService, CheckoutValidationError, CheckoutAuthorizationError } from "@/modules/checkout";
 import { InsufficientInventoryError } from "@/modules/catalog";
 import { createTestSessionAndCart, createTestShippingZone, createTestVariant, cleanupTestData } from "./helpers/fixtures";
 import { isDatabaseAvailable } from "./helpers/db-availability";
@@ -15,17 +15,18 @@ async function setUpReadyCheckout(governorate: string, quantity = 5, priceEgp = 
   const { session, cart } = await createTestSessionAndCart();
   await cartService.addItem(cart.id, variant.id, 2);
 
+  const requester = { sessionId: session.id, customerId: null };
   const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
-  await checkoutService.setAddress(checkoutSession.id, {
+  await checkoutService.setAddress(checkoutSession.id, requester, {
     recipientName: "عميل الاختبار",
     phoneE164: "+201001234567",
     governorate,
     city: "القاهرة",
     street: "شارع الاختبار",
   });
-  await checkoutService.getShippingRates(checkoutSession.id);
+  await checkoutService.getShippingRates(checkoutSession.id, requester);
 
-  return { category, variant, session, cart, checkoutSession };
+  return { category, variant, session, cart, checkoutSession, requester };
 }
 
 describe.skipIf(!dbAvailable)("checkout", () => {
@@ -41,11 +42,11 @@ describe.skipIf(!dbAvailable)("checkout", () => {
   it("places a COD order end to end: reserves inventory, creates the order, consumes the reservation, converts the cart", async () => {
     const zone = await createTestShippingZone({ feeEgp: 60 });
     shippingZoneIds.push(zone.id);
-    const { category, variant, session, checkoutSession } = await setUpReadyCheckout(zone.governorate, 5, 100);
+    const { category, variant, session, checkoutSession, requester } = await setUpReadyCheckout(zone.governorate, 5, 100);
     categoryIds.push(category.id);
     sessionIds.push(session.id);
 
-    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, {
+    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, {
       method: "COD",
       idempotencyKey: `test-${randomUUID()}`,
     });
@@ -71,11 +72,11 @@ describe.skipIf(!dbAvailable)("checkout", () => {
   it("order monetary snapshots never change when the current product price changes afterward", async () => {
     const zone = await createTestShippingZone({ feeEgp: 30 });
     shippingZoneIds.push(zone.id);
-    const { category, variant, session, checkoutSession } = await setUpReadyCheckout(zone.governorate, 5, 100);
+    const { category, variant, session, checkoutSession, requester } = await setUpReadyCheckout(zone.governorate, 5, 100);
     categoryIds.push(category.id);
     sessionIds.push(session.id);
 
-    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, {
+    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, {
       method: "COD",
       idempotencyKey: `test-snapshot-${randomUUID()}`,
     });
@@ -96,13 +97,13 @@ describe.skipIf(!dbAvailable)("checkout", () => {
   it("a duplicate submission with the same Idempotency-Key returns the original order, never a second one", async () => {
     const zone = await createTestShippingZone({ feeEgp: 40 });
     shippingZoneIds.push(zone.id);
-    const { category, session, checkoutSession } = await setUpReadyCheckout(zone.governorate);
+    const { category, session, checkoutSession, requester } = await setUpReadyCheckout(zone.governorate);
     categoryIds.push(category.id);
     sessionIds.push(session.id);
 
     const idempotencyKey = `test-dup-${randomUUID()}`;
-    const first = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey });
-    const second = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey });
+    const first = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey });
+    const second = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey });
 
     expect(second.orderId).toBe(first.orderId);
     expect(second.orderNumber).toBe(first.orderNumber);
@@ -114,7 +115,7 @@ describe.skipIf(!dbAvailable)("checkout", () => {
   it("an item that goes out of stock between cart-view and order-creation blocks the whole order, not silently completing it short", async () => {
     const zone = await createTestShippingZone({ feeEgp: 40 });
     shippingZoneIds.push(zone.id);
-    const { category, variant, session, checkoutSession } = await setUpReadyCheckout(zone.governorate, 2);
+    const { category, variant, session, checkoutSession, requester } = await setUpReadyCheckout(zone.governorate, 2);
     categoryIds.push(category.id);
     sessionIds.push(session.id);
 
@@ -122,7 +123,7 @@ describe.skipIf(!dbAvailable)("checkout", () => {
     await db.variant.update({ where: { id: variant.id }, data: { inventoryQuantity: 0 } });
 
     await expect(
-      checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-oos-${randomUUID()}` }),
+      checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey: `test-oos-${randomUUID()}` }),
     ).rejects.toThrow(InsufficientInventoryError);
 
     const orderCount = await db.order.count({ where: { checkoutSessionId: checkoutSession.id } });
@@ -138,7 +139,11 @@ describe.skipIf(!dbAvailable)("checkout", () => {
     const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
 
     await expect(
-      checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-${randomUUID()}` }),
+      checkoutService.confirmAndPlaceOrder(
+        checkoutSession.id,
+        { sessionId: session.id, customerId: null },
+        { method: "COD", idempotencyKey: `test-${randomUUID()}` },
+      ),
     ).rejects.toThrow(CheckoutValidationError);
   });
 
@@ -146,5 +151,42 @@ describe.skipIf(!dbAvailable)("checkout", () => {
     const { session, cart } = await createTestSessionAndCart();
     sessionIds.push(session.id);
     await expect(checkoutService.startCheckout(cart.id, null, "+201001234567")).rejects.toThrow(CheckoutValidationError);
+  });
+
+  it("a requester who does not own the checkout session cannot set its address, view its shipping rates, apply a coupon to it, or place its order (Phase 9.7 IDOR fix)", async () => {
+    const zone = await createTestShippingZone({ feeEgp: 40 });
+    shippingZoneIds.push(zone.id);
+    const { category, variant } = await createTestVariant({ quantity: 5 });
+    categoryIds.push(category.id);
+    const { session, cart } = await createTestSessionAndCart();
+    sessionIds.push(session.id);
+    await cartService.addItem(cart.id, variant.id, 1);
+    const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
+
+    const attacker = { sessionId: randomUUID(), customerId: null };
+
+    await expect(
+      checkoutService.setAddress(checkoutSession.id, attacker, {
+        recipientName: "مهاجم",
+        phoneE164: "+201009999999",
+        governorate: zone.governorate,
+        city: "القاهرة",
+        street: "شارع آخر",
+      }),
+    ).rejects.toThrow(CheckoutAuthorizationError);
+
+    await expect(checkoutService.getShippingRates(checkoutSession.id, attacker)).rejects.toThrow(CheckoutAuthorizationError);
+
+    await expect(checkoutService.applyCoupon(checkoutSession.id, attacker, "ANYCODE")).rejects.toThrow(CheckoutAuthorizationError);
+
+    await expect(
+      checkoutService.confirmAndPlaceOrder(checkoutSession.id, attacker, {
+        method: "COD",
+        idempotencyKey: `test-idor-${randomUUID()}`,
+      }),
+    ).rejects.toThrow(CheckoutAuthorizationError);
+
+    const orderCount = await db.order.count({ where: { checkoutSessionId: checkoutSession.id } });
+    expect(orderCount).toBe(0);
   });
 });

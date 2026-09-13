@@ -4,6 +4,7 @@ import { apiSuccess, parseOrError } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { apiError } from "@/lib/api-response";
+import { resolveSession, withSessionCookie } from "@/lib/session";
 import { checkoutService } from "@/modules/checkout";
 
 const bodySchema = z.object({ checkoutSessionId: z.string().uuid(), code: z.string().min(1).max(40) });
@@ -20,8 +21,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { discount } = await checkoutService.applyCoupon(parsed.data.checkoutSessionId, parsed.data.code);
-    return apiSuccess({ discountAmountMinor: discount.amountMinor });
+    const session = await resolveSession();
+    const { discount } = await checkoutService.applyCoupon(
+      parsed.data.checkoutSessionId,
+      { sessionId: session.sessionId, customerId: session.customerId },
+      parsed.data.code,
+    );
+    const response = apiSuccess({ discountAmountMinor: discount.amountMinor });
+    return session.isNew ? withSessionCookie(response, session.token) : response;
   } catch (error) {
     return mapDomainErrorToApiResponse(error);
   }

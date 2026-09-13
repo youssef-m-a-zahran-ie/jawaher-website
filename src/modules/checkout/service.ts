@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { Money } from "@/domain/money";
 import { normalizePhoneToE164 } from "@/domain/phone";
@@ -22,6 +22,47 @@ import { ZeroTaxPolicy } from "@/modules/checkout/tax-policy";
 import type { TaxPolicy } from "@/modules/checkout/tax-policy";
 
 const CHECKOUT_SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour to fill the form — independent of the inventory-reservation TTL (commerce-completeness-audit.md §5).
+
+type Db = PrismaClient | Prisma.TransactionClient;
+
+export class CheckoutAuthorizationError extends Error {
+  constructor() {
+    super("This checkout session does not belong to the current requester.");
+    this.name = "CheckoutAuthorizationError";
+  }
+}
+
+/**
+ * Phase 9.7 security fix — every checkout-flow function below previously
+ * trusted a bare `checkoutSessionId` with no ownership check at all
+ * (a real gap: the id is a random UUID, not guessable, but possession
+ * alone was sufficient to read/mutate someone else's in-progress
+ * checkout — including placing the order). Mirrors the exact ownership
+ * discipline already used for Orders (`customerId` match) and Cart
+ * (session-scoped lookup): a guest is verified via the owning `Cart`'s
+ * `sessionId`; a logged-in customer is additionally verified via
+ * `customerId`, so either identity model works correctly.
+ */
+async function assertCheckoutSessionOwnership(
+  checkoutSessionId: string,
+  requester: { sessionId: string; customerId: string | null },
+  client: Db = db,
+): Promise<void> {
+  const checkoutSession = await client.checkoutSession.findUnique({
+    where: { id: checkoutSessionId },
+    select: { cart: { select: { sessionId: true, customerId: true } } },
+  });
+  const owns =
+    !!checkoutSession &&
+    (checkoutSession.cart.sessionId === requester.sessionId ||
+      (requester.customerId !== null && checkoutSession.cart.customerId === requester.customerId));
+  if (!owns) {
+    // Deliberately the same error a not-found checkout session would
+    // realistically surface as (findUniqueOrThrow's own failure) —
+    // never distinguish "doesn't exist" from "not yours" to a caller.
+    throw new CheckoutAuthorizationError();
+  }
+}
 
 /** See tax-policy.ts — swapping this one line is how a real policy replaces the temporary zero-tax one, once that business decision lands. */
 const taxPolicy: TaxPolicy = new ZeroTaxPolicy();
@@ -51,7 +92,8 @@ export const checkoutService = {
   },
 
   /** Re-checks serviceability the moment an address is entered (requirements §9 / UX spec §10) — blocks progression before payment, not after. */
-  async setAddress(checkoutSessionId: string, address: AddressSnapshotInput) {
+  async setAddress(checkoutSessionId: string, requester: { sessionId: string; customerId: string | null }, address: AddressSnapshotInput) {
+    await assertCheckoutSessionOwnership(checkoutSessionId, requester);
     const phoneE164 = normalizePhoneToE164(address.phoneE164);
     const { serviceable } = await shippingService.checkServiceability(address.governorate);
     if (!serviceable) throw new CheckoutValidationError("unserviceable_address");
@@ -62,7 +104,8 @@ export const checkoutService = {
     });
   },
 
-  async getShippingRates(checkoutSessionId: string) {
+  async getShippingRates(checkoutSessionId: string, requester: { sessionId: string; customerId: string | null }) {
+    await assertCheckoutSessionOwnership(checkoutSessionId, requester);
     const session = await db.checkoutSession.findUniqueOrThrow({ where: { id: checkoutSessionId } });
     if (!session.governorate) throw new CheckoutValidationError("address_missing");
 
@@ -82,7 +125,8 @@ export const checkoutService = {
   },
 
   /** Re-validated again at final order placement (ux-specification.md §14: an expiring-mid-session coupon is caught, not silently honored). */
-  async applyCoupon(checkoutSessionId: string, code: string) {
+  async applyCoupon(checkoutSessionId: string, requester: { sessionId: string; customerId: string | null }, code: string) {
+    await assertCheckoutSessionOwnership(checkoutSessionId, requester);
     const session = await loadSessionWithCart(checkoutSessionId);
     const subtotal = subtotalFromCartItems(session.cart.items);
 
@@ -116,8 +160,11 @@ export const checkoutService = {
    */
   async confirmAndPlaceOrder(
     checkoutSessionId: string,
+    requester: { sessionId: string; customerId: string | null },
     params: { method: "COD" | "ONLINE"; idempotencyKey: string },
   ): Promise<OrderSummary> {
+    await assertCheckoutSessionOwnership(checkoutSessionId, requester);
+
     // ERP availability pre-check — deliberately OUTSIDE the transaction
     // below (a live HTTP call must never happen while a DB row lock is
     // held; the local reservation's own row lock is acquired only inside

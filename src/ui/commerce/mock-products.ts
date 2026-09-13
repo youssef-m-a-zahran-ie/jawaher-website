@@ -15,6 +15,7 @@ import type { ProductCardData } from "@/ui/commerce/types";
 export const MOCK_PRODUCTS: ProductCardData[] = [
   {
     id: "mock-1",
+    primaryVariantId: "mock-1",
     slug: "mock-dates-sample",
     name: "تمر مجدول (اسم تجريبي)",
     category: "تمور",
@@ -27,6 +28,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-2",
+    primaryVariantId: "mock-2",
     slug: "mock-dates-sample-2",
     name: "تمر سكري (اسم تجريبي)",
     category: "تمور",
@@ -37,6 +39,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-3",
+    primaryVariantId: "mock-3",
     slug: "mock-dates-sample-3",
     name: "تمر عجوة (اسم تجريبي)",
     category: "تمور",
@@ -47,6 +50,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-4",
+    primaryVariantId: "mock-4",
     slug: "mock-honey-sample",
     name: "عسل سدر (اسم تجريبي)",
     category: "عسل",
@@ -58,6 +62,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-5",
+    primaryVariantId: "mock-5",
     slug: "mock-honey-sample-2",
     name: "عسل نحل بلدي (اسم تجريبي)",
     category: "عسل",
@@ -68,6 +73,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-6",
+    primaryVariantId: "mock-6",
     slug: "mock-honey-sample-3",
     name: "عسل زهور (اسم تجريبي)",
     category: "عسل",
@@ -79,6 +85,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-7",
+    primaryVariantId: "mock-7",
     slug: "mock-oils-sample",
     name: "زيت زيتون (اسم تجريبي)",
     category: "زيوت",
@@ -90,6 +97,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-8",
+    primaryVariantId: "mock-8",
     slug: "mock-oils-sample-2",
     name: "زيت حبة البركة (اسم تجريبي)",
     category: "زيوت",
@@ -100,6 +108,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-9",
+    primaryVariantId: "mock-9",
     slug: "mock-oils-sample-3",
     name: "زيت سمسم (اسم تجريبي)",
     category: "زيوت",
@@ -110,6 +119,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-10",
+    primaryVariantId: "mock-10",
     slug: "mock-nuts-sample",
     name: "لوز (اسم تجريبي)",
     category: "مكسرات",
@@ -120,6 +130,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-11",
+    primaryVariantId: "mock-11",
     slug: "mock-nuts-sample-2",
     name: "كاجو (اسم تجريبي)",
     category: "مكسرات",
@@ -131,6 +142,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-12",
+    primaryVariantId: "mock-12",
     slug: "mock-nuts-sample-3",
     name: "فستق (اسم تجريبي)",
     category: "مكسرات",
@@ -141,6 +153,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-13",
+    primaryVariantId: "mock-13",
     slug: "mock-ghee-sample",
     name: "سمن بلدي (اسم تجريبي)",
     category: "سمن",
@@ -152,6 +165,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-14",
+    primaryVariantId: "mock-14",
     slug: "mock-ghee-sample-2",
     name: "سمن جاموسي (اسم تجريبي)",
     category: "سمن",
@@ -162,6 +176,7 @@ export const MOCK_PRODUCTS: ProductCardData[] = [
   },
   {
     id: "mock-15",
+    primaryVariantId: "mock-15",
     slug: "mock-ghee-sample-3",
     name: "سمن نباتي (اسم تجريبي)",
     category: "سمن",

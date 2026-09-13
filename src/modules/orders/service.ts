@@ -16,6 +16,13 @@ export class OrderAuthorizationError extends Error {
   }
 }
 
+export class OrderAlreadyCancelledError extends Error {
+  constructor() {
+    super("Order is already cancelled");
+    this.name = "OrderAlreadyCancelledError";
+  }
+}
+
 /**
  * ERP's real `primaryStatus` values (verified directly against
  * sales-order.service.ts this phase — see
@@ -92,13 +99,40 @@ async function getErpFulfillmentStage(order: { id: string; erpPushStatus: string
   }
 }
 
+/**
+ * Phase 9.7 security fix — `order.customerId !== requestingCustomerId` alone
+ * is correct for a logged-in customer, but for a GUEST order `order.customerId`
+ * is always `null`, and an unauthenticated requester's `customerId` is also
+ * always `null` — so that comparison was `null !== null` (false), meaning
+ * it silently authorized EVERY guest requester for EVERY guest order,
+ * regardless of who actually placed it. A real, already-shipped IDOR: any
+ * visitor who learned an order's internal UUID (not guessable, but nothing
+ * else was checked) could read another customer's full name/phone/address
+ * via `GET /api/v1/orders/[id]`. For a guest order, ownership is now the
+ * same originating-session check used for CheckoutSession (Phase 9.7,
+ * `assertCheckoutSessionOwnership` in checkout/service.ts) and for Cart
+ * elsewhere — never distinguishing "doesn't exist" from "not yours" to the
+ * caller, same as that fix.
+ */
+async function assertOrderOwnership(
+  order: { customerId: string | null },
+  orderId: string,
+  requester: { sessionId: string; customerId: string | null },
+): Promise<void> {
+  if (order.customerId !== null) {
+    if (order.customerId !== requester.customerId) throw new OrderAuthorizationError();
+    return;
+  }
+  const owningSessionId = await ordersRepository.findOwningSessionId(orderId);
+  if (owningSessionId !== requester.sessionId) throw new OrderAuthorizationError();
+}
+
 /** Public interface — module-boundaries.md's Orders row (createOrder lives in Checkout; this covers getOrder/getOrderStatus/trackOrder). */
 export const ordersService = {
-  /** `requestingCustomerId: null` means a guest session — authorized only if the order itself has no customerId (a guest order), per the same ownership rule. */
-  async getOrderForCustomer(orderId: string, requestingCustomerId: string | null) {
+  async getOrderForCustomer(orderId: string, requester: { sessionId: string; customerId: string | null }) {
     const order = await ordersRepository.findById(orderId);
     if (!order) throw new OrderNotFoundError();
-    if (order.customerId !== requestingCustomerId) throw new OrderAuthorizationError();
+    await assertOrderOwnership(order, orderId, requester);
 
     const erpFulfillmentStage = await getErpFulfillmentStage(order);
     return { ...order, customerFacingStatus: deriveCustomerFacingStatus(order, order.payments[0]?.status, erpFulfillmentStage) };
@@ -132,10 +166,12 @@ export const ordersService = {
    * (`NOT_PUSHED`/`FAILED`), or ERP has no record of it at all, only the
    * Website-local cancellation applies — nothing to reconcile.
    */
-  async cancelOrder(orderId: string, requestingCustomerId: string | null, reason: string) {
+  async cancelOrder(orderId: string, requester: { sessionId: string; customerId: string | null }, reason: string) {
     const order = await ordersRepository.findById(orderId);
     if (!order) throw new OrderNotFoundError();
-    if (order.customerId !== requestingCustomerId) throw new OrderAuthorizationError();
+    await assertOrderOwnership(order, orderId, requester);
+
+    if (order.status === "CANCELLED") throw new OrderAlreadyCancelledError();
 
     if (order.erpPushStatus === "SUCCEEDED") {
       // Throws ErpOrderRejectedError if ERP's own rules block it (e.g.
@@ -146,5 +182,27 @@ export const ordersService = {
     }
 
     return ordersRepository.cancel(orderId, reason);
+  },
+
+  /**
+   * Phase 9.7 — the guest-facing cancellation path, reachable from /track.
+   * Deliberately mirrors `trackOrder`'s own authorization model (order
+   * number + phone together, never session/customerId) rather than
+   * `cancelOrder`'s — a guest tracking/cancelling from a different device
+   * than the one that placed the order is the exact case `trackOrder`
+   * already exists to support; requiring session ownership here would
+   * silently break that. Same anti-enumeration/rate-limit posture as
+   * `trackOrder` is enforced by its caller (the API route), not here.
+   */
+  async cancelTrackedOrder(orderNumber: string, phoneE164: string, reason: string) {
+    const order = await ordersRepository.findByNumberAndPhone(orderNumber, phoneE164);
+    if (!order) throw new OrderNotFoundError();
+    if (order.status === "CANCELLED") throw new OrderAlreadyCancelledError();
+
+    if (order.erpPushStatus === "SUCCEEDED") {
+      await erpOrderAdapter.cancelOrder(order.id, reason);
+    }
+
+    return ordersRepository.cancel(order.id, reason);
   },
 };

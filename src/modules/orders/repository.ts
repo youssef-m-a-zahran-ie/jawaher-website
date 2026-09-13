@@ -12,6 +12,21 @@ export const ordersRepository = {
     });
   },
 
+  /**
+   * The guest session that originally placed an order — used ONLY for the
+   * ownership check on a guest order (Phase 9.7 fix, see `assertOrderOwnership`
+   * in service.ts), never included in a customer-facing response. A separate,
+   * minimal query rather than adding this relation to `findById` above, so
+   * every existing caller's response shape is untouched.
+   */
+  async findOwningSessionId(orderId: string, client: Db = db): Promise<string | null> {
+    const order = await client.order.findUnique({
+      where: { id: orderId },
+      select: { checkoutSession: { select: { cart: { select: { sessionId: true } } } } },
+    });
+    return order?.checkoutSession.cart.sessionId ?? null;
+  },
+
   /** Public tracking lookup — order number + phone together, never order number alone (commerce-completeness-audit.md §19's anti-enumeration control). */
   findByNumberAndPhone(orderNumber: string, phoneE164: string, client: Db = db) {
     return client.order.findFirst({

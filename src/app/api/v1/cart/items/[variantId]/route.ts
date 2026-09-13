@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-import { apiSuccess, parseOrError } from "@/lib/api-response";
+import { apiError, apiSuccess, parseOrError } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { resolveSession, withSessionCookie } from "@/lib/session";
 import { cartService } from "@/modules/cart";
 
@@ -17,6 +18,13 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
   try {
     const session = await resolveSession();
+
+    // Same cart-mutation rate limit as POST /api/v1/cart/items — see that route's comment.
+    const rate = checkRateLimit(`cart-update:${session.sessionId}`, 60, 10 * 60 * 1000);
+    if (!rate.allowed) {
+      return apiError("business_rule", "cart_rate_limited", "عدد المحاولات كبير، برجاء المحاولة لاحقًا.");
+    }
+
     const cart = await cartService.getOrCreateCartForSession(session.sessionId, session.customerId);
     await cartService.updateQuantity(cart.id, variantId, parsed.data.quantity);
     const view = await cartService.getCartView(cart.id);

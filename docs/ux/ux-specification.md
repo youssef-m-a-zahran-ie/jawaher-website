@@ -396,6 +396,7 @@ All content in this section must be business-supplied and factual — nothing he
 | "تسوق الآن" clicked inside a chapter | `product_experience_cta_clicked` (param: category) | New — needed to measure storytelling→shop conversion |
 | Search performed | `search` | New — GA4-standard name, natural gap given §8 |
 | Search result clicked | `select_item` with `list_name: search_results` | Reuses `select_item`, no new event |
+| Order cancelled by customer (post-purchase, via /track) | `order_cancelled` | New — Phase 9.7, no existing event fit a post-purchase cancellation (`checkout_abandoned` is pre-purchase only) |
 | OTP requested/verified/failed | *(not a product analytics event)* | Security-sensitive — belongs in server-side auth logs, deliberately excluded from client analytics |
 
 This table stays intentionally minimal — it does not design the analytics architecture (that is blueprint §14's job); it only tells frontend implementation which interaction fires which event.

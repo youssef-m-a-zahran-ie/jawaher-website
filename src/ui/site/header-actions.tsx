@@ -3,10 +3,10 @@
 import { Menu, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 
+import { CartDrawerContent } from "@/ui/commerce/cart-drawer-content";
 import { CATEGORIES } from "@/ui/commerce/categories";
 import { Accordion } from "@/ui/primitives/accordion";
 import { Drawer } from "@/ui/primitives/drawer";
-import { EmptyState } from "@/ui/primitives/empty-state";
 import { IconButton } from "@/ui/primitives/icon-button";
 import { Link } from "@/ui/primitives/link";
 import type { NavItem } from "@/ui/site/nav-items";
@@ -24,10 +24,9 @@ export type HeaderActionsProps = {
  * drawers reuse the Drawer primitive that already slides from the
  * reading-start edge under RTL.
  *
- * Cart is intentionally always empty here: Phase 3 does not implement real
- * cart persistence (this phase's brief) — the drawer demonstrates the real
- * interaction shell (docs/ux/ux-specification.md §9) a future Cart module
- * fills with real state, without pretending an item is actually in it.
+ * Cart drawer now shows the real, server-side cart (Phase 9.7) — see
+ * `cart-drawer-content.tsx` for the data-fetching/mutation logic. This
+ * component itself stays a thin shell around it (open/close state only).
  */
 export function HeaderActions({ navItems }: HeaderActionsProps) {
   const [navOpen, setNavOpen] = useState(false);
@@ -41,7 +40,7 @@ export function HeaderActions({ navItems }: HeaderActionsProps) {
     <div className="flex items-center gap-1">
       <IconButton
         icon={<ShoppingCart className="size-5" />}
-        aria-label="السلة، لا عناصر"
+        aria-label="السلة"
         onClick={() => setCartOpen(true)}
       />
       <div className="lg:hidden">
@@ -108,15 +107,7 @@ export function HeaderActions({ navItems }: HeaderActionsProps) {
       </Drawer>
 
       <Drawer open={cartOpen} onClose={() => setCartOpen(false)} title="السلة">
-        <EmptyState
-          title="السلة فارغة"
-          description="أضف منتجًا لتبدأ."
-          action={
-            <Link href="/shop" variant="secondary" onClick={() => setCartOpen(false)}>
-              متابعة التسوق
-            </Link>
-          }
-        />
+        <CartDrawerContent open={cartOpen} onClose={() => setCartOpen(false)} />
       </Drawer>
     </div>
   );

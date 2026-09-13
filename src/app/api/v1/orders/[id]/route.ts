@@ -8,7 +8,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   try {
     const session = await resolveSession();
-    const order = await ordersService.getOrderForCustomer(id, session.customerId);
+    const order = await ordersService.getOrderForCustomer(id, {
+      sessionId: session.sessionId,
+      customerId: session.customerId,
+    });
     return apiSuccess({ order });
   } catch (error) {
     return mapDomainErrorToApiResponse(error);

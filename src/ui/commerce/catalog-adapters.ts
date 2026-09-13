@@ -44,6 +44,7 @@ export function toProductCardData(product: ProductView): ProductCardData | null 
     compareAtPrice: primary.compareAtPrice ?? undefined,
     availability: primary.availability,
     hasMultipleVariants: product.hasMultipleVariants,
+    primaryVariantId: primary.id,
     imageAlt: `صورة المنتج — ${product.name}`,
   };
 }

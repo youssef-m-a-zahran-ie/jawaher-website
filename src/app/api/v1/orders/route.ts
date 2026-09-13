@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { apiError, apiSuccess, parseOrError } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { resolveSession, withSessionCookie } from "@/lib/session";
 import { checkoutService } from "@/modules/checkout";
 import { pushOrderToErp } from "@/modules/orders";
 
@@ -27,10 +29,22 @@ export async function POST(request: Request) {
   if (!parsed.success) return parsed.response;
 
   try {
-    const order = await checkoutService.confirmAndPlaceOrder(parsed.data.checkoutSessionId, {
-      method: parsed.data.method,
-      idempotencyKey,
-    });
+    const session = await resolveSession();
+
+    // Order placement gets its own rate limit, independent of the general
+    // API limit (technical-architecture.md §12) — the idempotency key above
+    // already makes retries of the SAME attempt safe/free; this guards
+    // against a single requester hammering the endpoint with distinct keys.
+    const rate = checkRateLimit(`order-place:${session.sessionId}`, 10, 10 * 60 * 1000);
+    if (!rate.allowed) {
+      return apiError("business_rule", "order_place_rate_limited", "عدد المحاولات كبير، برجاء المحاولة لاحقًا.");
+    }
+
+    const order = await checkoutService.confirmAndPlaceOrder(
+      parsed.data.checkoutSessionId,
+      { sessionId: session.sessionId, customerId: session.customerId },
+      { method: parsed.data.method, idempotencyKey },
+    );
 
     // Deliberately a SEPARATE step, after the Website's own transaction
     // has already committed (never inside it — see erp-sync.service.ts's
@@ -42,7 +56,8 @@ export async function POST(request: Request) {
     // rather than surfacing a failure here.
     await pushOrderToErp(order.orderId);
 
-    return apiSuccess({ order });
+    const response = apiSuccess({ order });
+    return session.isNew ? withSessionCookie(response, session.token) : response;
   } catch (error) {
     return mapDomainErrorToApiResponse(error);
   }

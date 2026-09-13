@@ -161,21 +161,22 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     sessionIds.push(session.id);
     await cartService.addItem(cart.id, variant.id, 5);
 
+    const requester = { sessionId: session.id, customerId: null };
     const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
-    await checkoutService.setAddress(checkoutSession.id, {
+    await checkoutService.setAddress(checkoutSession.id, requester, {
       recipientName: "عميل الاختبار",
       phoneE164: "+201001234567",
       governorate: zone.governorate,
       city: "القاهرة",
       street: "شارع الاختبار",
     });
-    await checkoutService.getShippingRates(checkoutSession.id);
+    await checkoutService.getShippingRates(checkoutSession.id, requester);
 
     // ...but by the time the customer confirms, ERP stock dropped below the cart quantity.
     stubErpAvailability({ [erpVariantId]: 2 });
 
     await expect(
-      checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-${randomUUID()}` })
+      checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey: `test-${randomUUID()}` })
     ).rejects.toBeInstanceOf(InsufficientInventoryError);
 
     const { db } = await import("@/lib/db");
@@ -200,20 +201,21 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     sessionIds.push(session.id);
     await cartService.addItem(cart.id, variant.id, 2);
 
+    const requester = { sessionId: session.id, customerId: null };
     const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
-    await checkoutService.setAddress(checkoutSession.id, {
+    await checkoutService.setAddress(checkoutSession.id, requester, {
       recipientName: "عميل الاختبار",
       phoneE164: "+201001234567",
       governorate: zone.governorate,
       city: "القاهرة",
       street: "شارع الاختبار",
     });
-    await checkoutService.getShippingRates(checkoutSession.id);
+    await checkoutService.getShippingRates(checkoutSession.id, requester);
 
     stubErpUnavailable();
 
     await expect(
-      checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-${randomUUID()}` })
+      checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey: `test-${randomUUID()}` })
     ).rejects.toBeInstanceOf(CheckoutValidationError);
 
     const { db } = await import("@/lib/db");
@@ -236,17 +238,18 @@ describe.skipIf(!dbAvailable)("ERP-authoritative inventory at cart/checkout (Pha
     sessionIds.push(session.id);
     await cartService.addItem(cart.id, variant.id, 2);
 
+    const requester = { sessionId: session.id, customerId: null };
     const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
-    await checkoutService.setAddress(checkoutSession.id, {
+    await checkoutService.setAddress(checkoutSession.id, requester, {
       recipientName: "عميل الاختبار",
       phoneE164: "+201001234567",
       governorate: zone.governorate,
       city: "القاهرة",
       street: "شارع الاختبار",
     });
-    await checkoutService.getShippingRates(checkoutSession.id);
+    await checkoutService.getShippingRates(checkoutSession.id, requester);
 
-    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, {
+    const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, {
       method: "COD",
       idempotencyKey: `test-${randomUUID()}`,
     });

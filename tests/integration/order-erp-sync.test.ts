@@ -46,16 +46,17 @@ async function setUpConfirmedOrder(erpVariantId: string | undefined, quantity = 
   const { session, cart } = await createTestSessionAndCart();
   await cartService.addItem(cart.id, variant.id, 2);
 
+  const requester = { sessionId: session.id, customerId: null };
   const checkoutSession = await checkoutService.startCheckout(cart.id, null, "+201001234567");
-  await checkoutService.setAddress(checkoutSession.id, {
+  await checkoutService.setAddress(checkoutSession.id, requester, {
     recipientName: "عميل الاختبار",
     phoneE164: "+201001234567",
     governorate: zone.governorate,
     city: "القاهرة",
     street: "شارع الاختبار",
   });
-  await checkoutService.getShippingRates(checkoutSession.id);
-  const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, { method: "COD", idempotencyKey: `test-${randomUUID()}` });
+  await checkoutService.getShippingRates(checkoutSession.id, requester);
+  const order = await checkoutService.confirmAndPlaceOrder(checkoutSession.id, requester, { method: "COD", idempotencyKey: `test-${randomUUID()}` });
 
   return { category, variant, session, zone, order };
 }
@@ -209,7 +210,7 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
     await pushOrderToErp(order.orderId);
 
     const { ordersService } = await import("@/modules/orders");
-    const view = await ordersService.getOrderForCustomer(order.orderId, null);
+    const view = await ordersService.getOrderForCustomer(order.orderId, { sessionId: session.id, customerId: null });
     expect(view.customerFacingStatus).toBe("out_for_delivery");
   });
 
@@ -229,7 +230,7 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
     await pushOrderToErp(order.orderId);
 
     const { ordersService } = await import("@/modules/orders");
-    const view = await ordersService.getOrderForCustomer(order.orderId, null);
+    const view = await ordersService.getOrderForCustomer(order.orderId, { sessionId: session.id, customerId: null });
     expect(view.customerFacingStatus).toBe("confirmed");
   });
 
@@ -250,7 +251,7 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
     await pushOrderToErp(order.orderId);
 
     const { ordersService } = await import("@/modules/orders");
-    const cancelled = await ordersService.cancelOrder(order.orderId, null, "customer_requested");
+    const cancelled = await ordersService.cancelOrder(order.orderId, { sessionId: session.id, customerId: null }, "customer_requested");
     expect(cancelled.status).toBe("CANCELLED");
   });
 
@@ -272,7 +273,9 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
 
     const { ordersService } = await import("@/modules/orders");
     const { ErpOrderRejectedError } = await import("@/modules/erp-integration");
-    await expect(ordersService.cancelOrder(order.orderId, null, "customer_requested")).rejects.toBeInstanceOf(ErpOrderRejectedError);
+    await expect(
+      ordersService.cancelOrder(order.orderId, { sessionId: session.id, customerId: null }, "customer_requested"),
+    ).rejects.toBeInstanceOf(ErpOrderRejectedError);
 
     const { db } = await import("@/lib/db");
     const row = await db.order.findUniqueOrThrow({ where: { id: order.orderId } });
@@ -289,7 +292,7 @@ describe.skipIf(!dbAvailable)("Website -> ERP order push (Phase 9.6)", () => {
     sessionIds.push(session.id);
 
     const { ordersService } = await import("@/modules/orders");
-    const cancelled = await ordersService.cancelOrder(order.orderId, null, "customer_requested");
+    const cancelled = await ordersService.cancelOrder(order.orderId, { sessionId: session.id, customerId: null }, "customer_requested");
     expect(cancelled.status).toBe("CANCELLED");
     expect(fetchSpy).not.toHaveBeenCalled();
   });

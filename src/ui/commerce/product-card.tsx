@@ -64,7 +64,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
           <PriceDisplay price={product.price} compareAtPrice={product.compareAtPrice} size="sm" />
           {canQuickAdd && (
             <div className="pointer-events-auto relative z-20">
-              <QuickAddButton productId={product.id} productName={product.name} category={product.category} />
+              <QuickAddButton variantId={product.primaryVariantId} productName={product.name} category={product.category} />
             </div>
           )}
         </div>

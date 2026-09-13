@@ -1,36 +1,41 @@
+import { catalogService } from "@/modules/catalog";
+import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { CATEGORIES } from "@/ui/commerce/categories";
 import { CategoryTile } from "@/ui/commerce/category-tile";
-import { MOCK_BEST_SELLERS } from "@/ui/commerce/mock-products";
 import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Hero } from "@/ui/home/hero";
 import { StoryTeaser } from "@/ui/home/story-teaser";
 import { TrustStrip } from "@/ui/home/trust-strip";
+import { EmptyState } from "@/ui/primitives/empty-state";
 import { PageContainer } from "@/ui/primitives/page-container";
 
 /**
  * Section order matches docs/ux/ux-specification.md §4 exactly: Hero,
- * Categories, Best sellers, Trust strip, (Offers — omitted, no active
- * offer exists in mock data; the spec requires it be entirely absent
- * rather than shown empty), Story+Products-Experience teaser, Footer
- * (rendered by the root layout). No additional sections were added beyond
- * that order — the root layout's default title/description already cover
- * the homepage, so no metadata export is needed here either.
+ * Categories, [Products], Trust strip, (Offers — omitted, no active offer
+ * exists, and the spec requires it be entirely absent rather than shown
+ * empty), Story+Products-Experience teaser, Footer (root layout).
  *
- * "Best sellers" (below) is DELIBERATELY STILL `MOCK_BEST_SELLERS`, not
- * reconnected by Phase 9.1. That phase's brief named /shop, /shop/
- * [category], /product/[slug], and /search explicitly — this page wasn't
- * one of them, and "best seller" has no real backing concept to reconnect
- * to even if it had been: no "featured"/"bestseller" flag exists on the
- * real `Product`/`Variant` schema (confirmed, not just unpopulated — see
- * docs/integration/catalog-inventory-gap-analysis.md §9's classification
- * of this exact question as **C — requires a business decision**, not a
- * data-wiring task). Left as-is rather than silently reconnected to an
- * arbitrary substitute (e.g. "first N real products") that would quietly
- * invent a ranking the business never asked for.
+ * Phase 9.7 — the "الأكثر مبيعًا" (best sellers) section here was
+ * `MOCK_BEST_SELLERS`, live on the real homepage, every product carrying a
+ * literal "(اسم تجريبي)" sample suffix — a real customer saw fake products
+ * under a claim ("best sellers") that isn't even a real, knowable business
+ * fact today (no "featured"/"bestseller" flag exists on `Product`/
+ * `Variant` — docs/integration/catalog-inventory-gap-analysis.md §9
+ * classifies that as a business decision this phase does not make).
+ * Replaced with real catalog data under an honest, non-invented title
+ * ("منتجاتنا") — the first N real products, no ranking claimed.
+ * `dynamic = "force-dynamic"` for the same reason /shop has it: this page
+ * has no dynamic segment, so Next would otherwise bake one build's
+ * catalog snapshot into a static page (shop/page.tsx's own comment).
  */
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+const HOMEPAGE_PRODUCT_COUNT = 8;
+
+export default async function HomePage() {
   const featuredCategory = CATEGORIES.find((category) => category.featured) ?? CATEGORIES[0];
   const otherCategories = CATEGORIES.filter((category) => category !== featuredCategory);
+  const products = toProductCardDataList(await catalogService.listAllProducts()).slice(0, HOMEPAGE_PRODUCT_COUNT);
 
   return (
     <>
@@ -47,8 +52,12 @@ export default function HomePage() {
       </PageContainer>
 
       <PageContainer className="py-16">
-        <h2 className="mb-6 text-h2 font-extrabold text-text-primary">الأكثر مبيعًا</h2>
-        <ProductGrid products={MOCK_BEST_SELLERS} />
+        <h2 className="mb-6 text-h2 font-extrabold text-text-primary">منتجاتنا</h2>
+        {products.length > 0 ? (
+          <ProductGrid products={products} />
+        ) : (
+          <EmptyState title="لا توجد منتجات حاليًا" description="سنضيف منتجات قريبًا." />
+        )}
       </PageContainer>
 
       <TrustStrip />
