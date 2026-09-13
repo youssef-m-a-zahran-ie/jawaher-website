@@ -15,6 +15,7 @@ export type NavItem = { label: string; href: string };
 export const NAV_ITEMS: NavItem[] = [
   { label: "المتجر", href: "/shop" },
   ...CATEGORIES.map((category) => ({ label: category.name, href: `/shop/${category.slug}` })),
+  { label: "تجربة المنتجات", href: "/experience" },
   { label: "من نحن", href: "/about" },
   { label: "تواصل معنا", href: "/contact" },
 ];

@@ -1,3 +1,5 @@
+import { JawaherPalmIcon } from "@/ui/brand/jawaher-mark";
+import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
 import { PageContainer } from "@/ui/primitives/page-container";
 import { TrackedLink } from "@/ui/primitives/tracked-link";
 
@@ -10,11 +12,21 @@ import { TrackedLink } from "@/ui/primitives/tracked-link";
  * (docs/design/design-system.md §8) only touches this file's background.
  * One headline, one CTA — no carousel, no secondary CTA
  * (docs/ux/ux-specification.md §4 row 1).
+ *
+ * Phase 10: the palm icon (large, low-opacity, reading-end side) and the
+ * ghosted packaging pattern (§ jawaher-pattern.tsx) are added as the
+ * composition's brand-forward layer — the first real trace of the
+ * official mark anywhere on the homepage, replacing pure color-field
+ * emptiness with something unmistakably Jawaher's own.
  */
 export function Hero() {
   return (
-    <section className="bg-gradient-to-b from-surface-dark to-brand-brown-mid">
-      <PageContainer className="flex flex-col items-start gap-6 py-20 sm:py-28">
+    <section className="relative overflow-hidden bg-gradient-to-b from-surface-dark to-brand-brown-mid">
+      <JawaherPattern className="text-text-on-dark" opacity={0.05} />
+      <JawaherPalmIcon
+        className="pointer-events-none absolute -end-16 top-1/2 hidden h-[32rem] w-[32rem] -translate-y-1/2 text-accent/10 sm:block"
+      />
+      <PageContainer className="relative flex flex-col items-start gap-6 py-20 sm:py-28">
         <p className="text-body-sm font-bold tracking-wide text-accent uppercase">علامة مصرية فاخرة</p>
         <h1 className="max-w-2xl text-display font-extrabold text-text-on-dark-strong text-balance">
           جواهر الخير

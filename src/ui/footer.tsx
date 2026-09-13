@@ -1,4 +1,6 @@
 import { CATEGORIES } from "@/ui/commerce/categories";
+import { JawaherPalmIcon } from "@/ui/brand/jawaher-mark";
+import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
 import { PageContainer } from "@/ui/primitives/page-container";
 import { Link } from "@/ui/primitives/link";
 
@@ -25,10 +27,14 @@ export function Footer() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className="bg-surface-dark">
-      <PageContainer className="grid gap-10 py-12 sm:grid-cols-2 lg:grid-cols-4">
+    <footer className="relative overflow-hidden bg-surface-dark">
+      <JawaherPattern className="text-text-on-dark" opacity={0.05} />
+      <PageContainer className="relative grid gap-10 py-12 sm:grid-cols-2 lg:grid-cols-4">
         <div className="sm:col-span-2 lg:col-span-1">
-          <p className="text-h4 font-extrabold text-text-on-dark-strong">جواهر الخير</p>
+          <div className="flex items-center gap-2">
+            <JawaherPalmIcon className="h-8 w-8 text-accent" />
+            <p className="text-h4 font-extrabold text-text-on-dark-strong">جواهر الخير</p>
+          </div>
           <p className="mt-2 max-w-xs text-body-sm text-text-on-dark/80">تُمُور وأكثر.</p>
         </div>
 

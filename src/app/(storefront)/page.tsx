@@ -1,3 +1,4 @@
+import { logger } from "@/lib/logger";
 import { catalogService } from "@/modules/catalog";
 import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { CATEGORIES } from "@/ui/commerce/categories";
@@ -27,15 +28,36 @@ import { PageContainer } from "@/ui/primitives/page-container";
  * `dynamic = "force-dynamic"` for the same reason /shop has it: this page
  * has no dynamic segment, so Next would otherwise bake one build's
  * catalog snapshot into a static page (shop/page.tsx's own comment).
+ *
+ * Phase 10 — the catalog fetch is wrapped in try/catch, unlike /shop and
+ * /shop/[category] (which deliberately let a catalog failure throw to the
+ * nearest error boundary): the homepage's Hero/Categories/TrustStrip/
+ * StoryTeaser sections carry the brand identity this phase is specifically
+ * about and must never go dark just because the "منتجاتنا" section's data
+ * happens to be unavailable — a real, verified bug found via this phase's
+ * own Playwright run (a catalog outage previously blanked the entire
+ * homepage, including the logo/hero, not just the product grid). /shop
+ * and PDP are a customer's deliberate destination for catalog data
+ * specifically, so failing loudly there remains correct and is left
+ * untouched — this fix is scoped to the homepage only.
  */
 export const dynamic = "force-dynamic";
 
 const HOMEPAGE_PRODUCT_COUNT = 8;
 
+async function loadHomepageProducts() {
+  try {
+    return toProductCardDataList(await catalogService.listAllProducts()).slice(0, HOMEPAGE_PRODUCT_COUNT);
+  } catch (err) {
+    logger.warn({ err }, "homepage: catalog fetch failed — showing the brand sections without a product grid");
+    return [];
+  }
+}
+
 export default async function HomePage() {
   const featuredCategory = CATEGORIES.find((category) => category.featured) ?? CATEGORIES[0];
   const otherCategories = CATEGORIES.filter((category) => category !== featuredCategory);
-  const products = toProductCardDataList(await catalogService.listAllProducts()).slice(0, HOMEPAGE_PRODUCT_COUNT);
+  const products = await loadHomepageProducts();
 
   return (
     <>

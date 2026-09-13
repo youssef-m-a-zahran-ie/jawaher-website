@@ -1,6 +1,7 @@
 import { Search, UserRound } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { JawaherPalmIcon } from "@/ui/brand/jawaher-mark";
 import { PageContainer } from "@/ui/primitives/page-container";
 import { Link } from "@/ui/primitives/link";
 import { HeaderActions } from "@/ui/site/header-actions";
@@ -27,8 +28,9 @@ export function Header() {
   return (
     <header className="sticky top-0 z-[var(--z-sticky)] border-b border-border bg-surface">
       <PageContainer className="flex h-16 items-center justify-between gap-4 sm:h-20">
-        <Link href="/" variant="text" className="shrink-0 text-h4 font-extrabold text-text-primary no-underline">
-          جواهر الخير
+        <Link href="/" variant="text" className="flex shrink-0 items-center gap-2 text-h4 font-extrabold text-text-primary no-underline">
+          <JawaherPalmIcon className="h-8 w-8 text-accent" />
+          <span>جواهر الخير</span>
         </Link>
 
         <nav aria-label="التنقل الرئيسي" className="hidden items-center gap-6 lg:flex">

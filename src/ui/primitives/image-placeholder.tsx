@@ -1,6 +1,7 @@
 import { ImageOff } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
 
 export type ImagePlaceholderProps = {
   /** What's missing, for screen readers — e.g. "صورة تمر مجدول فاخر". */
@@ -33,8 +34,9 @@ export function ImagePlaceholder({ label, variant = "card", caption, className }
           className,
         )}
       >
-        <ImageOff className="size-10 text-accent/80" aria-hidden="true" />
-        {caption && <p className="px-6 text-center text-caption text-text-on-dark/80">{caption}</p>}
+        <JawaherPattern className="text-text-on-dark" opacity={0.08} />
+        <ImageOff className="relative z-10 size-10 text-accent/80" aria-hidden="true" />
+        {caption && <p className="relative z-10 px-6 text-center text-caption text-text-on-dark/80">{caption}</p>}
       </div>
     );
   }
@@ -44,11 +46,11 @@ export function ImagePlaceholder({ label, variant = "card", caption, className }
       role="img"
       aria-label={label}
       className={cn(
-        "flex aspect-square items-center justify-center rounded-md border border-dashed border-border bg-surface-secondary",
+        "flex aspect-square items-center justify-center rounded-md bg-surface-secondary",
         className,
       )}
     >
-      <ImageOff className="size-8 text-text-tertiary" aria-hidden="true" />
+      <ImageOff className="size-8 text-text-tertiary/70" aria-hidden="true" />
     </div>
   );
 }

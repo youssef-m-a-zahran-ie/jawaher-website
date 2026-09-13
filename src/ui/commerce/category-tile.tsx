@@ -1,5 +1,6 @@
 import { Link } from "@/ui/primitives/link";
 import { cn } from "@/lib/cn";
+import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
 import type { CategoryInfo } from "@/ui/commerce/categories";
 
 export type CategoryTileProps = {
@@ -15,6 +16,11 @@ export type CategoryTileProps = {
  * brand-toned gradient field + a generic representative icon instead of a
  * fake photo (docs/design/brand-to-ui.md §2: never present a generated/
  * stock image as if it were real product photography).
+ *
+ * Phase 10: the ghosted packaging pattern (jawaher-pattern.tsx) fills the
+ * field behind the icon — the same real brand texture used on Jawaher's
+ * own packaging, instead of a plain gradient standing in for "no photo yet."
+ * A bottom scrim keeps the label legible over it regardless of pattern density.
  */
 export function CategoryTile({ category, size = "md", className }: CategoryTileProps) {
   const Icon = category.icon;
@@ -30,14 +36,16 @@ export function CategoryTile({ category, size = "md", className }: CategoryTileP
         className,
       )}
     >
+      <JawaherPattern className="text-text-on-dark" opacity={0.1} />
+      <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-surface-dark/90 to-transparent" />
       <Icon
         className={cn(
-          "absolute end-4 top-4 text-accent/70 transition-transform duration-200 ease-out group-hover:scale-110",
+          "relative z-10 self-end me-4 mt-4 text-accent/80 transition-transform duration-200 ease-out group-hover:scale-110",
           size === "lg" ? "size-12" : "size-8",
         )}
         aria-hidden="true"
       />
-      <div className="p-5">
+      <div className="relative z-10 p-5">
         <p className={cn("font-extrabold text-text-on-dark-strong", size === "lg" ? "text-h2" : "text-h4")}>
           {category.name}
         </p>
