@@ -1,6 +1,6 @@
-# Production Readiness & Launch Engineering (Phase 12 + Phase 13 + Phase 14)
+# Production Readiness & Launch Engineering (Phase 12 + Phase 13 + Phase 14 + Phase 14R)
 
-Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 14 — §18 added, a real isolated staging database now exists; §17 is Phase 13's own record, unchanged; §§1-16 are Phase 12's own record, unchanged).
+Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 14R — §19 added, RLS closed on the staging DB; the app-to-staging connection gate remains blocked pending manual dashboard action. §18/§17 are Phase 14/13's own record, unchanged; §§1-16 are Phase 12's own record, unchanged).
 
 This is the **one canonical production-readiness document** for the Website repository, per Phase 12's own instruction not to create redundant reports. It supersedes nothing else — [`premium-experience-phase-10.md`](../design/premium-experience-phase-10.md), [`production-readiness-phase-11.md`](../commerce/production-readiness-phase-11.md), and [`end-to-end-customer-commerce-readiness.md`](../commerce/end-to-end-customer-commerce-readiness.md) remain the record of their own phases' work — but consolidates the launch-readiness question those phases didn't yet ask end to end: **can this safely become a real production system serving real customers, connected to the real ERP?**
 
@@ -432,3 +432,73 @@ This is harmless on Vercel (each deployment/environment gets its own build with 
 ### 18.13 Explicitly out of scope this phase (unchanged from the brief)
 
 No DigitalOcean production infrastructure. No domain cutover or Shopify migration. No payment gateway or courier integration. No real Vercel deployment (blocked, §18.1/§18.11). No GitHub repository actually created (blocked, §18.1/§18.11). No multi-tenant SaaS architecture. The ERP repository was not opened, read, or modified. The real ERP database (§18.2) was queried only for table-name/row-count metadata to confirm it must be avoided — never for row content, never written to.
+
+---
+
+## 19. Staging Security & Database Connection Gate (Phase 14R)
+
+Focused continuation of Phase 14, closing the RLS gap it surfaced and attempting to close the app-to-staging connection gate. **The connection gate remains blocked** — reported honestly below rather than worked around.
+
+### 19.1 Existing authorization architecture — reviewed before touching anything
+
+Two genuinely distinct layers already exist, and this phase preserves the distinction rather than blurring it:
+
+- **(A) Database-level access control**: none existed before this phase — all 22 (now 23, including `_prisma_migrations`) tables in the staging project had RLS disabled, meaning Supabase's own client-facing `anon`/`authenticated` roles (used only by `supabase-js`/PostgREST, which this app never uses) could read/write every row if that key were ever distributed.
+- **(B) Application-level authorization**: the real mechanism this app has always relied on — opaque, database-looked-up session tokens (`session.ts`), every customer-scoped Prisma query filtered by `customerId`/session in application code, re-verified by Phase 9.7's own IDOR regression tests. **This phase changed nothing about (B)** — no new authorization model, no tenant context, nothing invented.
+- `technical-architecture.md:590` documents an aspirational **(C)**: per-concern-scoped Postgres roles (e.g. a narrower role for the ERP sync job vs. the general app role) — checked directly and confirmed **not implemented** in any migration or connection code; the app connects with one role for everything today. Stated here for accuracy, not treated as if it already exists.
+
+### 19.2 RLS — enabled correctly, verified not to affect Prisma access
+
+Before enabling anything, the actual role Prisma's connection would use was checked directly (not assumed): every table in `jawaher-website-staging` is owned by `postgres`, and `pg_roles` confirms `postgres`/`service_role` both have `rolbypassrls = true` while Supabase's `anon`/`authenticated` do not. In Postgres, RLS never restricts a table's owner regardless of policies — so enabling RLS with zero policies was verified, not assumed, to be safe for this app specifically:
+
+- **Applied**: `ENABLE ROW LEVEL SECURITY` on all 22 application tables plus `_prisma_migrations` (23 total).
+- **Verified after enabling**: a real `INSERT`/`SELECT` against `categories`, executed the same way Prisma would connect (as `postgres`), succeeded identically to before — inside a rolled-back transaction, no data left behind. The existing sample seed data (5/11/15/3/1 rows, Phase 14 §18.5) was re-confirmed intact and untouched.
+- **Advisory re-checked**: the earlier **critical** "RLS Disabled in Public" finding is gone. What remains is 23 **INFO**-level "RLS enabled, no policy" notes — expected and correct: no policies are needed because the only role this app ever connects as (`postgres`) bypasses RLS by ownership; policies would only matter if this project's `anon`/`authenticated` roles were ever going to be used, which they are not.
+- **What this does and does not provide**: this closes the Supabase-client/PostgREST/anon-key exposure surface (§18.6's advisory) as a database-level defense-in-depth measure. **It provides zero application authorization on its own** — a customer's own session-scoped access control is, and remains, entirely enforced by (B) above, in application code. Nothing here should be read as "RLS now protects customer data from other customers" — that guarantee already existed, and still exists, at the application layer, not the database layer.
+
+### 19.3 Database connection — blocked at the same boundary as Phase 14, confirmed again rather than assumed
+
+Re-checked directly this phase (not re-stated from Phase 14): the Supabase connector available in this session exposes `get_project_url` (the REST API URL) and `get_publishable_keys` (the anon key) — neither is a Postgres password. No tool in this session can retrieve, reset, or generate the database password. **This is a hard stop, not a workaround-able one.**
+
+**Exact manual action required** (nothing here is guessed): 
+1. Open the Supabase dashboard → project **`jawaher-website-staging`** (`https://kymtkfaetseeoiraldhh.supabase.co`) → **Project Settings → Database → Connection string**.
+2. Copy the **transaction pooler** connection string (port `6543`, host ending `pooler.supabase.com`) — preferred over the direct connection (port `5432`) for a serverless/Vercel deployment, for the connection-count reason already documented at §18.8. This is a recommendation to verify against Prisma's own pooler compatibility notes before finalizing, not a blind default — Prisma's driver adapter (`@prisma/adapter-pg`) works with either, but pooled connections in transaction mode do not support Postgres session-level features (e.g. advisory locks); this schema's one use of row locking (`SELECT ... FOR UPDATE`, `technical-decisions.md:263`) works fine under transaction pooling since it's issued inside a single transaction, not across statements — checked against the actual code, not assumed safe.
+3. Set that value as `DATABASE_URL` — **only** in the Vercel project's staging/preview environment variables once that project exists (§18.11), or in a local `.env` never committed (already gitignored, re-confirmed §17.1). **Never** in source code, never in this documentation, never in a commit.
+
+Because this remains unavailable, the following are **explicitly not done** and not claimed as done: a real `prisma migrate deploy` CLI run against staging (§19.4), the actual Next.js application connected to staging (§19.5), and HTTP-level commerce-flow validation against staging (§19.6).
+
+### 19.4 Prisma migration gate — status unchanged from Phase 14, reason restated precisely
+
+Phase 14 already applied the exact migration SQL and baselined `_prisma_migrations` with the real file checksum via the Supabase connector's own migration-apply mechanism (§18.3) — verified schema-equivalent to what `prisma migrate deploy` would produce, but not literally invoked as that CLI command, for the same reason as §19.3. Once a human supplies the real `DATABASE_URL` (§19.3) to a Prisma CLI locally or in CI, running `prisma migrate deploy` against it should report the database already up to date (zero pending migrations) — this is the expected, intended outcome of the baseline, not a claim that it has been observed to happen.
+
+### 19.5 / 19.6 Staging runtime & commerce validation — blocked, not attempted via workaround
+
+No environment-specific runtime configuration change was needed or made — `APP_ENV`/`DATABASE_URL`/`ERP_*` separation is already correctly structured in `env.ts`/`.env.example` (Phase 13 §17.4, re-confirmed unchanged this phase). What was **not** done, because §19.3 blocks it: starting the actual Next.js application against the staging `DATABASE_URL`, and validating catalog → cart → checkout → order → tracking → cancellation through real HTTP requests against staging. Phase 14 §18.4's SQL-level relational-integrity checks (constraints, idempotency, cancellation transitions) remain the most complete verification performed against this database's real schema — still accurate, still not a substitute for an application-level run.
+
+### 19.7 ERP safety — re-verified at the code level, unchanged
+
+Re-read `src/modules/erp-integration/client.ts` directly this phase: the guard requires **all three** of `ERP_BASE_URL`, `ERP_API_KEY`, `ERP_CONNECTION_ID` to be set or it throws `ErpNotConfiguredError` before any `fetch()` call is constructed (`client.ts:108-109`) — no default URL, no partial-config bypass, no silent fallback of any kind. Unchanged since Phase 8. The real ERP production database (§18.2) was not queried at all this phase — no reason to, and no instruction to.
+
+### 19.8 Cron safety — re-verified at the code level; execution against staging still unverifiable
+
+`internal-auth.ts` and both sweep routes re-read, unchanged since Phase 13: `GET` support, the dual `x-internal-api-secret`/`Authorization: Bearer $CRON_SECRET` acceptance, and fail-closed behavior in production all still match Phase 13's own unit tests (`tests/unit/internal-auth.test.ts`, still passing, §19.9). **Still not verified, and still not claimed**: actual execution against the staging database or an actual Vercel Cron trigger — both require the same blocked application/DB connection (§19.3) and a real Vercel deployment (§18.11), neither of which changed this phase.
+
+### 19.9 Validation performed this phase
+
+No source files required changing this phase (RLS was applied directly to the staging database, not through a migration file, since it is infrastructure state, not part of the app's own schema evolution). `git status` before and after this phase's work: clean, no diff. `npm run typecheck`, `npm run lint`, `npx vitest run` (175 passed, 71 skipped, 0 failed — identical to Phase 14), and `npm run build` were re-run anyway to confirm the baseline is still exactly as Phase 14 left it — confirmed, no drift.
+
+### 19.10 Production Safety Gate — updated rows only (all other rows unchanged from §18.11)
+
+| Dependency | Status | Notes |
+|---|---|---|
+| RLS on staging tables | **A — Verified operational** (was D) | Applied and verified this phase (§19.2); no application-behavior change; (B) application-level authorization is separately, already, and still the real access-control mechanism. |
+| App ↔ staging DB connection (real `DATABASE_URL`) | **C — Blocked** (was B) | Re-confirmed no tool in this session can retrieve or reset the Supabase database password (§19.3). Exact manual action specified above — this is now a hard boundary, not a pending task. |
+| Real `prisma migrate deploy` CLI execution against staging | **C — Blocked** | Depends on the row above. Schema is already correctly baselined (§18.3/§19.4) for when this becomes possible. |
+| Application running against staging DB | **C — Blocked** | Depends on the same row. |
+| Real HTTP-level staging commerce validation | **C — Blocked** | Depends on the same row; SQL-level equivalent already performed (§18.4). |
+
+### 19.11 Remaining external dependencies (unchanged in kind from Phase 14, restated for this phase's closure)
+
+1. Retrieve the real staging `DATABASE_URL` from the Supabase dashboard (§19.3) — the single dependency that, once resolved, unblocks §19.4/§19.5/§19.6 with no further code changes expected.
+2. GitHub repository creation and an actual Vercel project/deployment (unchanged from §18.11 — no credentials in this environment).
+3. An ERP sandbox does not exist and was not created (§18.2) — accepted as a permanent external dependency for this integration boundary, per explicit instruction not to bypass it.
