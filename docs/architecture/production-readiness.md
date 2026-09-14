@@ -1,6 +1,6 @@
-# Production Readiness & Launch Engineering (Phase 12 + Phase 13)
+# Production Readiness & Launch Engineering (Phase 12 + Phase 13 + Phase 14)
 
-Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 13 — §17 added; §§1-16 are Phase 12's own record, unchanged).
+Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 14 — §18 added, a real isolated staging database now exists; §17 is Phase 13's own record, unchanged; §§1-16 are Phase 12's own record, unchanged).
 
 This is the **one canonical production-readiness document** for the Website repository, per Phase 12's own instruction not to create redundant reports. It supersedes nothing else — [`premium-experience-phase-10.md`](../design/premium-experience-phase-10.md), [`production-readiness-phase-11.md`](../commerce/production-readiness-phase-11.md), and [`end-to-end-customer-commerce-readiness.md`](../commerce/end-to-end-customer-commerce-readiness.md) remain the record of their own phases' work — but consolidates the launch-readiness question those phases didn't yet ask end to end: **can this safely become a real production system serving real customers, connected to the real ERP?**
 
@@ -324,3 +324,111 @@ Per the phase brief's explicit framing: this is an architecture/configuration au
 ### 17.16 Explicitly out of scope this phase (unchanged from the brief)
 
 No DigitalOcean production infrastructure was created. No domain cutover or Shopify migration was performed or started. No payment gateway or courier integration was added. No full Website Admin or automation API was built. No actual Vercel deployment was executed (no account access in this sandbox — §17.7). No multi-tenant SaaS architecture was introduced (§17.15 is a documentation-only audit). The ERP repository was not touched (§17.13).
+
+---
+
+## 18. Staging Environment Bring-Up & Deployment Validation (Phase 14)
+
+Phase 13 prepared the code and documented what a staging deployment would need. Phase 14 attempted to actually stand up as much of that path as this sandbox's real, available credentials allow — and, critically, **discovered a live production resource that changes how the ERP boundary must be treated going forward.**
+
+### 18.1 Access audit — what was actually available, checked directly
+
+- **GitHub**: no `gh` CLI installed, no `GH_TOKEN`/`GITHUB_TOKEN` in the environment. **Confirmed blocked**, same conclusion as Phase 13, this time by actually attempting it rather than inferring it.
+- **Vercel**: the CLI installs fine via `npx vercel` (v59.16.0), but `vercel whoami` returns "Logged out" and no `VERCEL_TOKEN` exists in the environment. **Confirmed blocked** — a real attempt, not an assumption.
+- **A Supabase (Postgres) connector was available and authenticated this phase** — a genuinely new capability versus Phase 13. This is what made §18.2 possible.
+
+### 18.2 Critical discovery: a live ERP database exists, and it is not a sandbox
+
+Listing the Supabase projects reachable through this connector surfaced an existing project, **"Jawaher Project"** (id `vftrfswmmmakumipfpqg`, created 2026-07-19, region `eu-west-1`, status `ACTIVE_HEALTHY`) — **not previously known to this Website-side engineering record.** Its schema was inspected (table names and row counts only — no row content was read) before touching anything, specifically to answer "is this safe to treat as available infrastructure?":
+
+`sales_orders` (880 rows), `invoices` (789), `payments` (424), `business_partners`/`customer_profiles` (1,063), `journal_entries` (1,825), `stock_moves` (3,583), `integration_secrets` (84), `integration_connectors`, `company_integration_connections` — an accounting/ERP schema with real transactional volume, not fixture-shaped data. **This is the ERP's real database — confirmed with the user directly before proceeding.** It is not a sandbox, and per §17.6's already-established rule and the phase brief's own §11, it is now explicitly, permanently off-limits to anything this Website's staging work does: not read from with intent to use, not written to, not pointed at by any `ERP_*` variable in any Website environment. This project was touched only for this one read-only, table-metadata-level identification check — never queried for row content, never written to.
+
+**This finding matters beyond this phase**: it confirms the ERP side of this integration is further along (a real, populated, apparently-live system) than the Website-side documentation had visibility into. The ERP-staging-boundary conclusion from Phase 13 (§17.6) — "no ERP sandbox is confirmed to exist, so leave `ERP_*` unset in staging" — is **strengthened, not weakened**, by this discovery: there is now direct evidence of exactly what an accidental staging write would land in.
+
+### 18.3 A real, isolated staging PostgreSQL database now exists
+
+With the user's explicit go-ahead (and a $0/month cost confirmed and shown to the user before creation, per the connector's own cost-confirmation flow), a **new, separate** Supabase project was created for this purpose alone:
+
+- **Name**: `jawaher-website-staging` · **Project ref**: `kymtkfaetseeoiraldhh` · **Region**: `eu-west-1` · **Postgres 17** · **Status: ACTIVE_HEALTHY, verified live.**
+- Same Supabase organization as the ERP project (the user's own account has one organization) — a **separate project**, with its own separate database, separate connection credentials, and separate project id. Nothing about this project is shared with, derived from, or reachable through the ERP project.
+- **Schema deployed**: the exact, real, already-committed `prisma/migrations/20260913203005_init/migration.sql` (589 lines, unmodified) was applied via the connector's migration-apply mechanism. **Verified after applying** — not assumed — by listing the resulting schema back: all 22 tables, all enums, all primary/foreign keys, and all indexes match the migration file exactly (`list_tables` with column/FK detail, cross-checked table-by-table against the migration source).
+- **Prisma migration bookkeeping baselined**: an `_prisma_migrations` table was created matching Prisma's own internal schema, with one row recording migration `20260913203005_init` as applied, using the migration file's real SHA-256 checksum (`f18a8126...3001b`, computed locally via `sha256sum` against the actual file — not invented). This matters operationally (§18.9): without this, the first real `prisma migrate deploy` run against this database (once a human has the real connection string) would try to re-run `CREATE TABLE` statements against tables that already exist, and fail.
+- **What this phase could NOT do**: run the literal `prisma migrate deploy` CLI command against this database, or connect the actual Next.js application/Prisma Client to it. The raw Postgres password Supabase generates at project creation is not exposed by any tool available in this session — only the Supabase dashboard shows it. So schema deployment here was performed through Supabase's own migration-application mechanism (applying the exact same SQL `prisma migrate deploy` would run), not literally by invoking the Prisma CLI — an honest distinction, not a cosmetic one. **Manual action required**: retrieve the real connection string from the Supabase dashboard (Project Settings → Database → Connection string, project `kymtkfaetseeoiraldhh`) — prefer the **transaction-pooler** connection string (port 6543, `...pooler.supabase.com`) over the direct connection (port 5432) for Vercel's serverless model (§18.8 explains why), and set it as `DATABASE_URL` in the Vercel staging project once one exists.
+
+### 18.4 Schema, constraint, and relational-integrity verification — real, not assumed
+
+Beyond confirming the schema matches the migration file, the following were **actually executed against the live staging database**, inside explicit transactions that were rolled back afterward (so no synthetic data was left behind):
+
+- **Unique constraint enforcement**: inserting a duplicate `categories.slug` correctly raised `unique_violation`.
+- **FK `RESTRICT` enforcement**: deleting a `category` still referenced by a `product` correctly raised `foreign_key_violation` — confirming the same ownership/deletion-safety behavior §5 already documented for the schema is real, not just declared.
+- **The full checkout relational chain** — `session → cart → cart_item → checkout_session → inventory_reservation → order → order_item → payment` — was inserted end to end and read back successfully.
+- **Idempotency**: a second `orders` row reusing the same `idempotencyKey` correctly raised `unique_violation` — the same guarantee `confirmAndPlaceOrder`'s own transaction relies on (§6) is confirmed enforced at the real database level.
+- **Cancellation**: transitioning an order to `CANCELLED` and its reservation to `RELEASED` succeeded cleanly.
+- All of the above ran inside `BEGIN; ... ROLLBACK;` — verified by re-querying row counts immediately after (`orders`/`sessions`/`carts`/`inventory_reservations`/`payments` all `0`) — this was schema/constraint verification, not data left behind.
+
+### 18.5 Staging data actually loaded
+
+The project's own canonical `prisma/seed.ts` content (unmodified — 5 categories, 11 products each carrying the existing "(اسم تجريبي)" / sample-name suffix, 15 variants, 3 shipping zones, 1 coupon) was loaded into the staging database via the same mechanism. Row counts verified after loading: `categories=5, products=11, variants=15, shipping_zones=3, coupons=1`. This is real, live, queryable staging data — not a description of what seeding *would* produce. It is the exact same sample data `isSampleContent()` (Phase 11R) already recognizes and excludes from indexing/sitemap, satisfying §10's "staging data must be clearly non-production" requirement using the project's existing convention rather than a new one.
+
+### 18.6 Security advisory surfaced, not silently fixed
+
+The connector's own tooling flagged, as a **critical** advisory: all 22 tables in the new staging database have Row Level Security (RLS) disabled, which — for a table accessed via Supabase's own client library and anon/publishable key — would mean any holder of that key can read or write every row. **This advisory is surfaced here rather than auto-remediated**, per the tool's own explicit instruction not to enable RLS without policies (doing so with zero policies would block all access, including this app's own). Relevant context for the user's decision: this application does not use Supabase's client library, PostgREST, or an anon/publishable key anywhere — it connects exclusively via a direct Postgres connection string through Prisma's driver adapter (`src/lib/db.ts`, unchanged, re-confirmed §18.9) — so the practical exposure is low **as long as this project's anon/publishable key is never distributed to any client-side code**. The remediation SQL (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` for all 22 tables) is available and was shown to the user; enabling it is a decision for the user to make, not something this phase applied unilaterally.
+
+### 18.7 The one code fix this phase made: `robots.ts` was build-time-static, not per-request
+
+Found while re-auditing Phase 13's own `APP_ENV`-gated files for Vercel/DigitalOcean portability specifically (§18.8): `sitemap.ts` has `export const dynamic = "force-dynamic"`; `robots.ts` did not. A real `npm run build` confirmed the consequence directly — `robots.txt` built as a static `○` route, not a dynamic `ƒ` one, meaning its `APP_ENV` check was evaluated once, at build time, and baked into the output.
+
+This is harmless on Vercel (each deployment/environment gets its own build with its own env vars) but is a real, previously-undetected bug for the "build once, run on DigitalOcean" path this app must stay portable to: the `Dockerfile` sets `NODE_ENV` at build time but never `APP_ENV` — so an image built once and later run with different `APP_ENV` values per environment would forever serve whatever `robots.txt` the *build* produced (defaulting to blocked, since `APP_ENV` defaults to `"development"`), never reflecting the container's actual runtime environment. **Fixed**: added `export const dynamic = "force-dynamic"` to `robots.ts`, matching `sitemap.ts`. Re-verified via a fresh build: `robots.txt` is now `ƒ` (dynamic). Full test suite re-run after the fix — no regression (§18.10).
+
+### 18.8 Vercel/DigitalOcean compatibility — re-audited with staging now real
+
+- **`src/lib/db.ts`** re-read directly: the Prisma client is a module-level singleton, cached across warm serverless invocations by construction (only the dev-mode hot-reload cache is gated by `NODE_ENV`) — this is already the correct pattern for Vercel, not a gap.
+- **New operational note, not a code issue**: a real Postgres instance behind a serverless app faces a real connection-count ceiling as concurrency scales (each warm serverless instance holds its own connection pool). Staging's traffic is far too low for this to matter in practice, but it's the reason to prefer Supabase's **transaction-pooler** connection string (§18.3) once real load-testing or a production decision is on the table — documented here so it isn't rediscovered as an incident later.
+- **`src/lib/rate-limit.ts`**: unchanged, still the documented single-instance-only limiter (ADR-015). Re-flagging because Vercel's serverless model is now concretely the target, not hypothetical — multiple concurrent staging requests could land on different warm instances, each counting independently. Not fixed this phase (introducing Redis "because Vercel exists" is exactly what the brief warns against); the ADR's own trigger condition for revisiting this is unchanged.
+- **No filesystem writes, no long-running process, no background worker** exist anywhere in the codebase beyond the two Cron-compatible sweep endpoints (Phase 13) — re-confirmed by the same searches Phase 13 already ran, no changes found.
+- **Asset/storage strategy (§16 of the brief)**: no upload/storage pipeline exists at all — confirmed by grep (`STORAGE_BUCKET_URL` appears only as a reserved, unused `env.ts` entry; no `fs.writeFile`/`multer`/`formidable` anywhere in `src`). Product imagery is currently placeholder/pattern-based (`ImagePlaceholder`, Phase 10), not real photography — there is nothing local-filesystem-dependent to migrate before staging, and when a real media pipeline is eventually built, `STORAGE_BUCKET_URL` is already reserved for exactly the object-storage/CDN shape that would keep it Vercel- and DigitalOcean-compatible.
+
+### 18.9 Cron / internal jobs — re-verified, unchanged
+
+`internal-auth.ts`, both `GET`-enabled sweep routes, and `vercel.json`'s cron declarations (Phase 13) were re-read in full: authentication logic, GET support, and `CRON_SECRET` handling are unchanged and still correct. **Still explicitly unverified** (unchanged from Phase 13, since no Vercel account access exists in either phase): whether Vercel Cron actually fires, and the real Hobby-tier frequency limit. No scheduler exists in any environment today beyond the `vercel.json` declaration itself — re-stating this plainly rather than letting the file's presence imply otherwise.
+
+### 18.10 Testing & verification performed this phase
+
+- `npm run typecheck`, `npm run lint` — clean, re-run after the `robots.ts` change.
+- `npx vitest run` — **175 passed, 71 skipped, 0 failed** — identical to Phase 13's count; this phase's only source change (`robots.ts`) has no unit test surface of its own beyond what Phase 13's `robots-staging-safety.test.ts` already pins, and that suite still passes unchanged.
+- `npm run build` — clean; confirms `robots.txt` is now `ƒ` (dynamic), matching `sitemap.xml` (§18.7).
+- **Playwright E2E** — **30 of 32 passed**, the identical pre-existing 2 failures Phase 12/13 already documented (DB-unreachable-in-this-sandbox `catalogService` behavior) — re-confirmed unrelated to this phase's change.
+- **Staging database verification** — executed for real, against the live `jawaher-website-staging` project, not simulated: schema match, constraint enforcement, relational-chain integrity, idempotency, cancellation (§18.4), row-count-verified seeding (§18.5). **Not verified**: the actual Next.js application/Prisma Client connecting to this database (no retrievable connection string in this session — §18.3), and therefore no verification of the app's own runtime behavior (health endpoint, real HTTP checkout flow, cron execution) against it.
+
+### 18.11 Production Safety Gate — explicit classification
+
+| Dependency | Status | Notes |
+|---|---|---|
+| Website repository structure/config | **A — Verified operational** | Builds, tests, lints clean; `.gitignore`/secret hygiene re-confirmed (§17.1). |
+| Actual GitHub repository (`jawaher-website`) | **C — Blocked** | No `gh` CLI/token in this environment (§18.1). Manual action: user creates the repo and pushes this local `main`. |
+| Git branch/PR workflow | **B — Prepared, needs GitHub** | Convention documented (§17.2); branch protection is GitHub-side config, applies only once the repo exists. |
+| CI (GitHub Actions) | **A — Verified operational** | Re-read in full (§18's own audit); ephemeral Postgres service, `migrate deploy`, seed, tests, build, E2E — already correct, unchanged. Will only actually *run* once a GitHub remote exists. |
+| Actual Vercel project | **C — Blocked** | CLI installs, but `vercel whoami` = logged out, no token (§18.1). Manual action: user creates the project via the Vercel dashboard/CLI once logged in, connects this GitHub repo. |
+| Actual Vercel staging deployment | **C — Blocked** | Depends on the two rows above; no deployment was performed or can be claimed. |
+| Staging PostgreSQL database | **A — Verified operational** | Real, isolated, live: `jawaher-website-staging` (`kymtkfaetseeoiraldhh`). Schema deployed and verified, seeded, constraint/relational-integrity tested (§18.3-18.5). |
+| App ↔ staging DB connection (real `DATABASE_URL`) | **B — Prepared, needs manual retrieval** | Password only visible via the Supabase dashboard (§18.3). |
+| RLS on staging tables | **D — Business/security decision required** | Advisory surfaced (§18.6), remediation SQL provided, not applied — user's call. |
+| ERP staging sandbox | **C — Blocked, and now confirmed why** | No sandbox exists; the only reachable ERP-shaped resource is the real ERP production database (§18.2) — permanently out of scope for staging. `ERP_*` must stay unset in any staging environment. |
+| Vercel Cron actually executing | **C — Blocked** | Depends on a real Vercel deployment; `vercel.json` is prepared, unverified (§18.9). |
+| Vercel/DigitalOcean portability | **A — Verified, one fix applied** | `robots.ts` build-time-static bug found and fixed (§18.7); no other portability gap found this phase. |
+| Reusable e-commerce foundation | **A — Verified, unchanged from Phase 13** | No new violation introduced; Phase 13's one documented friction point (`JawaherPattern` coupling) still stands, still not fixed, still correctly out of this phase's scope. |
+| DigitalOcean production hosting | **E — Future production work** | Not started, not touched, per explicit instruction. |
+| Domain cutover / Shopify migration | **E — Future production work** | `jewelsherb.com`, Shopify, and its DNS were not touched, read, or referenced by any change this phase. |
+
+### 18.12 Rollback / recovery — staging
+
+- **Bad deployment**: once a real Vercel project exists, Vercel's own dashboard lets any prior deployment be promoted back to the staging alias instantly — no code-level rollback mechanism was built or is needed beyond that.
+- **Bad migration against the staging DB**: the same rule as §8 (Backups & disaster recovery) applies — Prisma does not auto-generate down-migrations; recovery is either redeploying the previous app version against the still-previous schema, or a hand-written compensating migration. This staging database currently has exactly one migration (`20260913203005_init`) baselined (§18.3) — no rollback-compatibility risk exists yet.
+- **Rotating staging secrets**: `INTERNAL_API_SECRET`/`CRON_SECRET` are plain environment variables in the (not-yet-created) Vercel project — rotate by generating a new value and updating it there; no code change needed (`internal-auth.ts` reads them fresh from `env` each request).
+- **Disabling staging ERP integration**: already the default and the recommended state — simply never set `ERP_BASE_URL`/`ERP_API_KEY`/`ERP_CONNECTION_ID` in the staging environment (§17.6, re-confirmed §18.2).
+- **Disabling cron if necessary**: remove the relevant entry from `vercel.json`'s `crons` array (or the whole file) and redeploy — both sweep endpoints remain independently callable via their existing shared-secret header for manual/alternate triggering.
+- **Recovering/repointing the staging database itself**: the Supabase project (`kymtkfaetseeoiraldhh`) can be paused, restored from Supabase's own point-in-time recovery (subject to the free tier's actual retention window — not verified from this session), or a fresh project created and re-seeded from the same `prisma/seed.ts` this phase used — the staging database is disposable by design, unlike production.
+
+### 18.13 Explicitly out of scope this phase (unchanged from the brief)
+
+No DigitalOcean production infrastructure. No domain cutover or Shopify migration. No payment gateway or courier integration. No real Vercel deployment (blocked, §18.1/§18.11). No GitHub repository actually created (blocked, §18.1/§18.11). No multi-tenant SaaS architecture. The ERP repository was not opened, read, or modified. The real ERP database (§18.2) was queried only for table-name/row-count metadata to confirm it must be avoided — never for row content, never written to.
