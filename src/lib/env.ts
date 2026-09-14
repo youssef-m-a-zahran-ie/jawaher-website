@@ -16,6 +16,23 @@ import { z } from "zod";
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
+  // Phase 13 — deliberately SEPARATE from NODE_ENV. Next.js sets
+  // NODE_ENV=production for every optimized build regardless of which
+  // real deployment tier it ends up on — a Vercel *preview/staging*
+  // deployment has NODE_ENV=production exactly like the eventual real
+  // production deployment does, so NODE_ENV alone cannot answer "is this
+  // actually production" for decisions like SEO indexing (§ robots.ts/
+  // sitemap.ts) or (once a real destination exists) analytics/notification
+  // delivery. Also deliberately NOT Vercel's own `VERCEL_ENV` — that
+  // variable won't exist on the eventual self-hosted/DigitalOcean
+  // deployment at all, and this app must stay portable between the two
+  // (technical-architecture.md §18/blueprint.md: "Vercel for preview
+  // only"). Defaults to "development" — the safest failure mode for an
+  // unconfigured deployment is to be treated as NOT production (extra
+  // caution: noindex, no real analytics) rather than silently acting like
+  // production because a deploy forgot to set this.
+  APP_ENV: z.enum(["development", "staging", "production"]).default("development"),
+
   // Database (consumed by src/lib/db.ts)
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required — see .env.example"),
 
@@ -31,6 +48,8 @@ const envSchema = z.object({
   // it's testable without provisioning a secret); required in production
   // — see that route's own check.
   INTERNAL_API_SECRET: z.string().min(16).optional(),
+  /** Vercel's own fixed env-var name for its automatic cron request auth — see .env.example's comment. Same secret VALUE as INTERNAL_API_SECRET, just under the name Vercel requires. */
+  CRON_SECRET: z.string().min(16).optional(),
 
   // How long a soft inventory hold survives before it's released
   // (src/modules/catalog/inventory.ts) — Phase 1 New Finding #1's fix.

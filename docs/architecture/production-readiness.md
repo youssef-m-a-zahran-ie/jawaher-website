@@ -1,6 +1,6 @@
-# Production Readiness & Launch Engineering (Phase 12)
+# Production Readiness & Launch Engineering (Phase 12 + Phase 13)
 
-Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-13.
+Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 13 — §17 added; §§1-16 are Phase 12's own record, unchanged).
 
 This is the **one canonical production-readiness document** for the Website repository, per Phase 12's own instruction not to create redundant reports. It supersedes nothing else — [`premium-experience-phase-10.md`](../design/premium-experience-phase-10.md), [`production-readiness-phase-11.md`](../commerce/production-readiness-phase-11.md), and [`end-to-end-customer-commerce-readiness.md`](../commerce/end-to-end-customer-commerce-readiness.md) remain the record of their own phases' work — but consolidates the launch-readiness question those phases didn't yet ask end to end: **can this safely become a real production system serving real customers, connected to the real ERP?**
 
@@ -185,3 +185,142 @@ Shopify remains migration-only, never runtime infrastructure (re-confirmed, §1)
 ## 16. Deferred work
 
 Everything in §2's classifications C (non-blocking polish), D (business decisions), E (infrastructure), and F (future features) — nothing in those categories was implemented this phase, consistent with the instruction to fix only what's clearly correct, safe, and not dependent on an unavailable decision or dependency.
+
+---
+
+## 17. GitHub & Vercel Staging Foundation (Phase 13)
+
+**Explicit scope boundary for this section, carried over from the phase brief and binding on every claim below**: this is preparation for a *safe, isolated staging/testing* environment only. Nothing here touches the current production domain (still served by Shopify), moves production traffic, creates DigitalOcean infrastructure, or makes an irreversible infrastructure decision. No deployment success is claimed unless it actually happened in this sandbox — and no isolation claim is made unless it is either directly verified or structurally guaranteed by code that was actually read.
+
+### 17.1 GitHub repository readiness
+
+- **No remote is configured** (`git remote -v` returns nothing) — this repository has never been pushed to GitHub. Only one branch exists (`main`), 15+ commits, all local.
+- **Git history reviewed for accidental secrets, end to end**: `git log --all -p -- .env` returns empty — `.env` was never committed at any point in this repository's history. A full-history grep for the real production domain (`jewelsherb`/`jawaherelkheir`-style strings) and for any hardcoded credential returns no matches in any tracked file at any commit. **Nothing to remediate** — no history rewrite is needed or was performed.
+- **`.gitignore` reviewed in full**: `.env*` ignored with `.env.example` explicitly re-allowed, plus `.vercel`, `.next/`, `node_modules`, `/coverage`, `/test-results`, `/playwright-report`, `/prisma/dev.db*`, `*.tsbuildinfo`, `next-env.d.ts`. Already comprehensive — no gap found, nothing added.
+- **Repository separation**: `jawaher-website` (this repo) and `jawaher-erp` (`E:\Engineering\Projects\Jawaher\ERP JAW`) remain, and must remain, two separate repositories — no monorepo merge was considered or performed. The ERP repository was not opened, read, or modified at any point this phase (re-confirmed at commit time, §17.13).
+
+### 17.2 Branch & development workflow
+
+Not GitFlow — a simple, standard flow, matching the phase brief's own instruction: `main` (always deployable) → short-lived feature branches → pull request → CI must pass → Vercel Preview deployment for that PR → review → merge. This is a **documented convention**, not new tooling: no branch-protection rule, CODEOWNERS file, or PR template exists yet because no GitHub remote exists to attach them to (§17.1). Creating the actual GitHub repository, enabling branch protection on `main`, and connecting Vercel's GitHub integration are the concrete first steps whenever the user is ready to act on this — none were performed here since doing so would require pushing this repository to a real, user-owned GitHub account, an action with real external effect this phase does not take unilaterally.
+
+### 17.3 CI (re-confirmed, not re-built)
+
+Phase 12 already brought CI to the standard this phase would otherwise ask for — re-verified against `.github/workflows/ci.yml` directly, not assumed: install → typecheck → lint → `prisma migrate deploy` against a real ephemeral Postgres **service container** (not `db push`, not production, not the ERP database) → unit/integration tests → build → E2E. This already satisfies §5 of the phase brief (an isolated CI-only Postgres, never pointed at production or ERP-production). **No change made this phase** — confirming an existing correct thing is not the same as claiming this phase built it.
+
+### 17.4 Environment model — `APP_ENV`
+
+**The core new mechanism this phase adds.** `NODE_ENV` cannot distinguish "a Vercel staging/preview deployment" from "the eventual real production deployment" — Next.js sets `NODE_ENV=production` for every optimized build regardless of tier, staging included. Vercel's own `VERCEL_ENV` isn't an option either — it won't exist on the eventual self-hosted/DigitalOcean host, and this app must stay portable between the two (`technical-architecture.md` §18: "Vercel for preview only"). So Phase 13 introduces `APP_ENV: "development" | "staging" | "production"` (`src/lib/env.ts`), validated by the same Zod schema as every other variable, defaulting to `"development"` — the cautious failure mode if a deployment ever forgets to set it.
+
+Every environment variable in `env.ts`, classified (this classification already existed implicitly in that file's own comments; consolidated explicitly here):
+
+| Variable | Classification | Notes |
+|---|---|---|
+| `NODE_ENV` | environment-specific, framework-managed | Never manually set on Vercel; always `"production"` for any optimized build. |
+| `APP_ENV` | environment-specific, server-only | New this phase. Drives `robots.ts`/`sitemap.ts` indexing and (once wired) analytics/notification gating. Never `NEXT_PUBLIC_`. |
+| `DATABASE_URL` | secret, environment-specific | Must differ between local/CI/staging/production — never shared (§17.5). |
+| `NEXT_PUBLIC_SITE_URL` | public-client-safe, environment-specific | Falls back to a dev URL rather than a guessed real domain — unchanged from Phase 3. |
+| `INTERNAL_API_SECRET` | secret, environment-specific | Gates the two internal sweep endpoints. |
+| `CRON_SECRET` | secret, environment-specific | New this phase — Vercel's own fixed name for its automatic cron auth header; same secret *value* as `INTERNAL_API_SECRET`, under the name Vercel requires (§17.9). |
+| `INVENTORY_RESERVATION_TTL_MINUTES` | server-only, non-secret config | No client exposure needed. |
+| `ERP_BASE_URL` / `ERP_API_KEY` / `ERP_CONNECTION_ID` / `ERP_REQUEST_TIMEOUT_MS` | secret (API key/connection id), environment-specific | Server-only, never `NEXT_PUBLIC_`. Staging guidance: §17.6. |
+| `OTP_PROVIDER_API_KEY` / `PAYMENT_PROVIDER_API_KEY` / `SHIPPING_PROVIDER_API_KEY` / `ANALYTICS_GA4_ID` / `STORAGE_BUCKET_URL` | reserved, unused | No code reads these yet (confirmed by grep — none appear outside `env.ts`/`.env.example`); nothing to classify further until the feature that needs them exists. |
+
+No variable containing a secret is, or should ever become, prefixed `NEXT_PUBLIC_` — confirmed by reading every `NEXT_PUBLIC_` reference in the codebase (`NEXT_PUBLIC_SITE_URL` is the only one, and it is a public URL by design, not a secret). `loadEnv()` throws at process start on any missing/malformed required variable — a staging deployment with a missing required variable fails to boot, not silently misbehaves.
+
+### 17.5 Staging database
+
+**Must be a dedicated Postgres instance, isolated from any future production database and from the ERP's own database — never shared, never invented here.** This phase does not provision one (no infrastructure access in this sandbox) — it documents the exact requirement:
+- A real, separate `DATABASE_URL` pointed at a staging-only Postgres instance (a free-tier managed Postgres, or a small dedicated instance — the specific provider is an infrastructure decision, not made here).
+- Schema applied via `prisma migrate deploy` against that instance — **never `prisma db push`** (Phase 12 already removed `db push` from CI and documented it as the wrong tool for anything but local dev, §5 above; the same rule applies to staging).
+- **Never reset a database that might hold useful data.** If a staging database already exists from earlier manual testing, its contents are not touched by anything in this phase.
+- No staging database credential was invented, guessed, or hardcoded anywhere in this phase's changes — confirmed by the same secret-grep sweep used at commit time (§17.13).
+
+### 17.6 ERP staging boundary — the most important safety requirement in this phase
+
+**Question addressed directly, not assumed**: does a real ERP staging/sandbox tenant currently exist? Evidence found: `docs/integration/erp-integration-testing-plan.md` states the *principle* that ERP integration tests should run "against a sandbox or recorded fixtures," and `technical-architecture.md`'s environment model says staging should point "at sandbox ERP/payment/shipping credentials **where available**." Neither document, nor anything found in this repository, confirms a real ERP sandbox company/tenant is actually provisioned today. Per this phase's own instruction not to invent one, the conclusion is: **no ERP sandbox is confirmed to exist.**
+
+**Recommendation, and the only safe default given that**: leave `ERP_BASE_URL`, `ERP_API_KEY`, and `ERP_CONNECTION_ID` **unset** in the Vercel staging project's environment variables. This is not a gap needing a workaround — the ERP adapter already fails safely when unconfigured: `src/modules/erp-integration/client.ts`'s `ErpNotConfiguredError` (thrown at call time, `client.ts:109`) means every code path that would otherwise call the real ERP instead throws a clear, typed error rather than silently doing nothing or, worse, silently succeeding against production ERP data. A staging deployment with no ERP credentials configured can safely exercise the storefront UI, cart, and Website-side order creation, with ERP-dependent behavior (live price/availability overlay, order push) failing loudly and safely instead of touching real ERP data.
+
+**This closes the actual risk this section exists to close**: staging cannot accidentally perform a real production ERP write, because it has no ERP credentials to do so with. If a real ERP sandbox tenant is provisioned later, wiring it in is a configuration change (setting the three variables in the Vercel project), not a code change — the adapter's boundary is already environment-variable-driven, not hardcoded.
+
+### 17.7 Vercel staging architecture — what was prepared, and what was not
+
+**Prepared (code-level, verified via a real local build — see §17.12):**
+- The app already builds with `output: "standalone"` and runs correctly as a set of serverless functions per route (confirmed: every API route and dynamic page in the build output above is a discrete `ƒ` entry, exactly the shape Vercel's platform expects) — no Vercel-specific code was added or needed for this to work.
+- `vercel.json` (new, this phase) declares the two existing internal sweep endpoints as Vercel Cron jobs (§17.9) — the only Vercel-specific configuration file in the repository, and it is additive (does nothing outside Vercel; a DigitalOcean deployment simply ignores this file and runs the same endpoints from a plain cron daemon instead, §17.9).
+- `robots.ts`/`sitemap.ts` are now environment-aware (§17.8) so a staging deployment is safe to actually put on the public internet without competing with production in search results.
+
+**Not performed, and not claimed as performed**: no real Vercel project was created and no real deployment was executed — this sandbox has no Vercel account credentials or CLI access. The manual steps required, precisely, whenever the user is ready:
+1. Push this repository to a real GitHub repository (§17.1/§17.2).
+2. Create a new Vercel project from that GitHub repository.
+3. In the Vercel project's environment variables (Preview/staging scope only — never Production scope, and this project should not have a Production scope configured at all until a real production decision is made): set `DATABASE_URL` (a dedicated staging Postgres, §17.5), `APP_ENV=staging`, `INTERNAL_API_SECRET` and `CRON_SECRET` (same value, freshly generated — never reused from any other environment), and leave every `ERP_*` variable unset (§17.6).
+4. Do **not** configure the real production domain in this Vercel project (§17.10) — use Vercel's own generated `*.vercel.app` preview URL only.
+5. Run `prisma migrate deploy` against the new staging database before the first deployment (never `db push`).
+6. Deploy; then run the smoke test in §17.12.
+
+**Explicitly not assumed**: that Vercel is the final production host. `technical-architecture.md` already states the opposite intent ("Vercel for preview only," self-hosted/Docker/DigitalOcean as the target) — nothing added this phase introduces a Vercel-only data model, API, or business-logic dependency (§17.11 confirms this directly).
+
+### 17.8 Staging SEO safety — environment-aware `robots.ts`/`sitemap.ts`
+
+Both files now read `APP_ENV` (not `NODE_ENV`, which can't distinguish staging from production — §17.4) and default to the safe behavior:
+- `robots.ts`: returns a single `disallow: "/"` rule for every visitor whenever `APP_ENV !== "production"`. Phase 11R's real, per-route production policy (public commerce pages indexable; `/account`, `/checkout`, `/track` `noindex`) is untouched and takes over only when `APP_ENV=production` explicitly.
+- `sitemap.ts`: returns `[]` (no URLs at all) under the same condition — a stronger signal than a populated sitemap a `Disallow: /` merely asks crawlers to respect.
+- Both behaviors are pinned by new, dedicated unit tests (`tests/unit/robots-staging-safety.test.ts`), not left to a single manual read — the stakes are asymmetric in both directions (a staging leak competing with real product listings in search results, versus a misconfigured `APP_ENV` silently de-indexing real production forever).
+- This is explicitly a **`noindex`/crawl-blocking** control, not an access-control mechanism — per the phase brief's own instruction, staging `noindex` is not a substitute for keeping staging non-public-facing if that matters; nothing in this phase adds authentication in front of the staging deployment itself (out of scope, not requested).
+
+### 17.9 Cron / ERP-retry sweep — Vercel compatibility, without a second mechanism
+
+Neither existing sweep (`sweep-expired-reservations`, Phase 1; `retry-failed-erp-pushes`, Phase 12) is triggered automatically in **any** environment today — both are, and were already documented as, "an external scheduler hits a shared-secret-protected internal endpoint," with no scheduler ever actually wired up. This phase does not change that fact; it prepares one specific scheduler (Vercel Cron, for the staging environment only) without inventing a second retry mechanism or a queue:
+
+- `src/lib/internal-auth.ts` (new, shared) is now the single authorization check both routes use, accepting **either** of two presentations of the same configured secret: the original `x-internal-api-secret` header (any generic scheduler — a DigitalOcean cron daemon, a manual curl) or `Authorization: Bearer <CRON_SECRET>` (Vercel Cron's own fixed, automatic convention — it attaches this header itself whenever `CRON_SECRET` is set on the project). Pinned by 5 new unit tests (`tests/unit/internal-auth.test.ts`) covering both accepted presentations and both rejection paths.
+- Both routes now export a `GET` handler (aliased to the same function as the existing `POST`) because Vercel Cron can only issue `GET` requests to a configured path — `POST` remains for any other caller.
+- `vercel.json` declares both routes on an hourly schedule (`"0 * * * *"`) as a conservative placeholder. **Explicitly unverified**: the exact cron-frequency limit on Vercel's Hobby tier could not be checked from this sandbox (no Vercel account access) — confirm the account's actual tier limits before relying on this schedule.
+- **The same responsibility, unchanged, for DigitalOcean later**: a plain cron daemon on that host hitting the same two paths with the same `x-internal-api-secret` header requires no code change — `vercel.json` is inert outside Vercel, so there is no duplicate mechanism to keep in sync.
+
+### 17.10 Domain/URL safety
+
+The real production domain is not configured anywhere in this repository (re-confirmed, §17.1's grep sweep) and nothing this phase adds changes that. `NEXT_PUBLIC_SITE_URL` remains optional with a localhost fallback (Phase 3's own decision, unchanged) — a staging deployment sets it to its own Vercel-generated preview URL, never the real domain. The phase brief's instruction not to touch the existing Shopify DNS/domain setup required no code action — nothing in this codebase has ever referenced it.
+
+### 17.11 Vercel compatibility & portability audit
+
+- **No persistent in-memory state that would break across serverless invocations was found beyond one already-documented case**: `src/lib/rate-limit.ts`'s in-memory limiter (ADR-015, already self-documented as single-instance-only) is *more* fragile on Vercel's per-invocation serverless model than on a traditional long-running server — re-confirmed as an existing, documented, not-yet-triggered scaling concern; not fixed this phase (would mean introducing Redis specifically because Vercel exists, which the phase brief explicitly warns against doing prematurely).
+- **No filesystem writes at runtime**: confirmed no code path writes to disk outside build time.
+- **No long-running process or background worker exists** — the only "background work" in the entire codebase is the two sweep endpoints, both now Vercel-Cron-compatible (§17.9) and both already request-scoped, stateless functions.
+- **No Vercel-only data model, API shape, or business logic was introduced.** `vercel.json` is the only Vercel-specific file added; every other change (`APP_ENV`, `internal-auth.ts`, `robots.ts`/`sitemap.ts`) is plain Next.js/Node code that runs identically under Docker/DigitalOcean.
+
+### 17.12 Testing & verification performed this phase
+
+- `npm run typecheck`, `npm run lint` — clean, re-run after every substantive change.
+- `npx vitest run` — **175 passed, 71 skipped, 0 failed** (up from Phase 12's 167 — the 8 new Phase 13 tests: 5 for `internal-auth.ts`, 3 for `robots.ts`'s environment gating). All skips are the same pre-existing DB-dependent integration tests Phase 12 already documented; this sandbox still has no reachable Postgres (reconfirmed).
+- `npm run build` — clean. Build output confirms both internal sweep routes and `robots.txt`/`sitemap.xml` compile as expected dynamic (`ƒ`) routes.
+- **Playwright E2E, real production build/server** — **30 of 32 passed**, the identical pre-existing 2 failures Phase 12 already documented and traced to `catalogService` throwing (not returning "not found") when Postgres is unreachable (`product/not-a-product` and the category-heading navigation check) — re-run after this phase's `robots.ts`/`sitemap.ts` changes specifically to confirm no regression, none found.
+- **Explicitly not verified in this environment** (no Vercel account access, no reachable Postgres): an actual Vercel deployment; `prisma migrate deploy` against a real staging database; Vercel Cron actually firing and hitting either sweep endpoint; the real behavior of `checkInternalRequestAuthorized` against Vercel's actual `Authorization` header formatting in production (structurally verified against Vercel's documented convention, not against a real Vercel request). Reported honestly as **structurally verified / locally verified, not staging-deployment-verified.**
+
+### 17.13 Production safety — explicit verification
+
+Each concern from the phase brief's §23, checked directly:
+- **Staging cannot modify the production database** — structurally guaranteed: staging's `DATABASE_URL` is a separate, dedicated instance (§17.5); nothing in the codebase reads a second/fallback database URL or connects to more than one `DATABASE_URL` at a time (`src/lib/db.ts` re-confirmed the single source of truth, unchanged from Phase 12's own audit).
+- **Staging cannot create real production ERP orders or mutate real production inventory** — structurally guaranteed by §17.6's recommendation: no ERP credentials configured means every ERP call throws `ErpNotConfiguredError` before any network request is made.
+- **Staging cannot send real customer notifications** — moot, not merely mitigated: `src/modules/notifications/*` has no real provider wired at all (`LogNotificationProvider` is the only implementation; it logs a masked phone number and sends nothing anywhere, in every environment, re-confirmed by reading all four files in that module this phase).
+- **Staging cannot pollute production analytics** — also currently moot: `track()` remains the no-op abstraction Phase 3 scoped it as (re-confirmed, §17.14) — there is no real destination for staging to send events to yet. The **future requirement**, once a real destination is wired: gate it by `APP_ENV` exactly as `robots.ts`/`sitemap.ts` now do, not by `NODE_ENV`.
+- **Staging cannot claim to be the production website in SEO** — guaranteed by §17.8's `robots.ts`/`sitemap.ts` behavior, pinned by tests.
+- **The ERP repository was not modified** — re-confirmed at the end of this phase: no file under `E:\Engineering\Projects\Jawaher\ERP JAW` was opened, read, or written at any point during Phase 13.
+
+### 17.14 Email/notification & analytics — audited, nothing to fix
+
+Both audited directly against current code, not assumed from prior documentation:
+- **Notifications**: `src/modules/notifications/{index,log-provider,provider,service}.ts` read in full. `LogNotificationProvider` is the only implementation of the `NotificationProvider` interface; every call (`otp_code`, `order_confirmed`, `payment_confirmed`, `payment_failed`, `order_status_changed`, `order_cancelled`) results only in a structured log line containing a masked phone number — no real SMS/email/OTP provider is integrated anywhere. Nothing for a staging deployment to accidentally trigger for real. **Future staging requirement, documented not built**: whenever a real provider is wired, it must be configured per-environment (a real staging deployment should either use that provider's own sandbox/test-mode credentials or keep `LogNotificationProvider`, never real production notification credentials).
+- **Analytics**: `track()` remains a no-op abstraction (Phase 3's own scoping, re-confirmed unchanged) — no property ID, no real destination call exists in the codebase today. Nothing for staging to pollute. Same future requirement as above: gate any real destination by `APP_ENV`, not `NODE_ENV`.
+
+### 17.15 Reusable e-commerce foundation — audit findings (documentation only, no redesign performed)
+
+Per the phase brief's explicit framing: this is an architecture/configuration audit, not a request to build multi-tenancy, and not a redesign phase. Findings:
+
+- **Core commerce modules (`src/modules/*` — catalog, cart, checkout, orders, customers, promotions, erp-integration, notifications) contain zero brand-specific hardcoding.** Verified directly: `grep -rl "جواهر\|Jawaher\|جوهر" src/modules --include="*.ts"` (excluding tests) returns no matches. Business logic (pricing, availability, order lifecycle, ERP sync) is already brand-agnostic at this layer — a genuinely positive finding, not something this phase had to fix.
+- **Brand-specific content in `src/app`/`src/ui` is concentrated exactly where expected**: SEO metadata copy (`product/[slug]/page.tsx`, `shop/page.tsx` — Arabic marketing description strings), the dedicated brand-identity components (`src/ui/brand/jawaher-mark.tsx`, `jawaher-pattern.tsx` — these *are* the brand layer by design), and the homepage/experience/header/footer content layer already identified in Phase 10 as "business/brand configuration." This matches the established, intentional core-commerce-vs-brand-configuration split — not a new problem.
+- **One real, specific coupling point worth flagging for future reuse, found and documented (not fixed) this phase**: the brand-specific `JawaherPattern` decorative texture component is imported directly — not injected via a prop/slot — into 7 call sites, two of which sit outside the clearly brand-owned layer: `src/ui/commerce/category-tile.tsx` (a `commerce/`-namespaced, otherwise generic catalog UI component) and `src/ui/primitives/image-placeholder.tsx` (a `primitives/`-namespaced component whose folder name implies brand-agnostic building blocks). Reusing either component for a different brand today would require editing their source, not swapping a prop or config value. **Not fixed this phase**: a partial fix touching only these 2 of 7 call sites would not meaningfully improve reusability without touching the other 5 (which live in the already-acknowledged brand/experience layer and are lower-value to change), and doing all 7 is a UI refactor beyond this phase's GitHub/Vercel-staging scope — correctly deferred, not silently ignored.
+- **Business/brand configuration (categories, homepage "chapters," header/footer navigation copy) lives directly in TypeScript source files, not a database or CMS.** Acceptable, and arguably correct, for a single-tenant production site today — no unnecessary abstraction was built for a hypothetical second brand. Documented as the concrete friction point a future "customize for another business" effort would hit first: that work would extract these into a data/config layer, not rewrite the commerce engine underneath them, which is exactly the "reusable foundation" property this audit was checking for and did not find violated.
+
+### 17.16 Explicitly out of scope this phase (unchanged from the brief)
+
+No DigitalOcean production infrastructure was created. No domain cutover or Shopify migration was performed or started. No payment gateway or courier integration was added. No full Website Admin or automation API was built. No actual Vercel deployment was executed (no account access in this sandbox — §17.7). No multi-tenant SaaS architecture was introduced (§17.15 is a documentation-only audit). The ERP repository was not touched (§17.13).

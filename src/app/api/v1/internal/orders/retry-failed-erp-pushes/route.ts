@@ -1,6 +1,6 @@
-import { apiError, apiSuccess } from "@/lib/api-response";
+import { apiSuccess } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
-import { env } from "@/lib/env";
+import { checkInternalRequestAuthorized } from "@/lib/internal-auth";
 import { retryFailedErpPushes } from "@/modules/orders";
 
 /**
@@ -8,24 +8,22 @@ import { retryFailedErpPushes } from "@/modules/orders";
  * `internal/inventory/sweep-expired-reservations` (that route's own
  * comment) — no job queue, mirrors an already-established pattern exactly.
  * Nothing in this project invokes this on a schedule yet; wiring an actual
- * cron trigger against this URL is a deployment-configuration task (see
- * docs/architecture/production-readiness.md).
+ * cron trigger is a deployment-configuration task. Phase 13 prepares (but
+ * has not verified against a real deployment) Vercel Cron as one such
+ * trigger for the staging environment — see `vercel.json`.
  *
  * Phase 12 — closes a real gap: `pushOrderToErp` was always documented as
  * safe to call repeatedly/from a sweep, but no sweep ever existed, so an
  * order whose first ERP push failed had no path back to `SUCCEEDED` short
  * of a manual database edit.
  *
- * Protected by a shared secret (never by obscurity). Fails closed: if no
- * secret is configured in production, every call is rejected.
+ * `GET` and `POST` both run the exact same sweep — see the sibling
+ * route's own comment on why (Vercel Cron issues GET only; `POST` remains
+ * for any other scheduler).
  */
-export async function POST(request: Request) {
-  if (env.NODE_ENV === "production" || env.INTERNAL_API_SECRET) {
-    const provided = request.headers.get("x-internal-api-secret");
-    if (!env.INTERNAL_API_SECRET || provided !== env.INTERNAL_API_SECRET) {
-      return apiError("authorization", "internal_endpoint_unauthorized", "غير مصرح.");
-    }
-  }
+async function runSweep(request: Request) {
+  const unauthorized = checkInternalRequestAuthorized(request);
+  if (unauthorized) return unauthorized;
 
   try {
     const result = await retryFailedErpPushes();
@@ -34,3 +32,6 @@ export async function POST(request: Request) {
     return mapDomainErrorToApiResponse(error);
   }
 }
+
+export const GET = runSweep;
+export const POST = runSweep;

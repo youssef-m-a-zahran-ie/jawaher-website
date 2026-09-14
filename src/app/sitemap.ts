@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 
 import { isSampleContent } from "@/lib/content-integrity";
+import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { SITE_URL } from "@/lib/site-url";
 import { catalogService } from "@/modules/catalog";
@@ -34,6 +35,15 @@ const POLICY_SLUGS = ["shipping", "returns", "payment", "privacy", "terms"];
 export const dynamic = "force-dynamic";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  // Phase 13 — matches robots.ts's own environment check exactly (see its
+  // comment for why `APP_ENV`, not `NODE_ENV`): a non-production
+  // deployment has nothing worth advertising for crawling — an empty
+  // sitemap is a stronger, simpler signal than a populated one a
+  // `Disallow: /` robots.txt is merely asking crawlers to respect.
+  if (env.APP_ENV !== "production") {
+    return [];
+  }
+
   const now = new Date();
 
   const staticEntries: MetadataRoute.Sitemap = [

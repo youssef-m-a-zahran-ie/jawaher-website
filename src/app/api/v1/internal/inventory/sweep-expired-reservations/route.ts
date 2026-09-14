@@ -1,6 +1,6 @@
-import { apiError, apiSuccess } from "@/lib/api-response";
+import { apiSuccess } from "@/lib/api-response";
 import { mapDomainErrorToApiResponse } from "@/lib/api-error-mapping";
-import { env } from "@/lib/env";
+import { checkInternalRequestAuthorized } from "@/lib/internal-auth";
 import { expireStaleReservations } from "@/modules/catalog";
 
 /**
@@ -8,20 +8,21 @@ import { expireStaleReservations } from "@/modules/catalog";
  * technical-architecture.md §19 specifies for MVP (no job queue). Nothing
  * in this project invokes this on a schedule yet — see
  * docs/planning/commerce-completeness-audit.md §21's risk note; wiring an
- * actual cron trigger is a deployment-configuration task.
+ * actual cron trigger is a deployment-configuration task. Phase 13
+ * prepares (but has not verified against a real deployment) Vercel Cron
+ * as one such trigger for the staging environment — see `vercel.json`
+ * and `checkInternalRequestAuthorized`'s own comment for the auth
+ * convention this now also accepts.
  *
- * Protected by a shared secret (never by obscurity — "internal" in the
- * path is not a security boundary on its own). Fails closed: if no secret
- * is configured in production, every call is rejected rather than
- * silently allowed.
+ * `GET` and `POST` both run the exact same sweep — this is an internal,
+ * secret-gated, idempotent trigger, not a public resource with different
+ * read/write semantics. `GET` exists specifically because Vercel Cron
+ * can only issue GET requests to a configured path; `POST` remains for
+ * any other scheduler (curl, a DigitalOcean cron daemon) that prefers it.
  */
-export async function POST(request: Request) {
-  if (env.NODE_ENV === "production" || env.INTERNAL_API_SECRET) {
-    const provided = request.headers.get("x-internal-api-secret");
-    if (!env.INTERNAL_API_SECRET || provided !== env.INTERNAL_API_SECRET) {
-      return apiError("authorization", "internal_endpoint_unauthorized", "غير مصرح.");
-    }
-  }
+async function runSweep(request: Request) {
+  const unauthorized = checkInternalRequestAuthorized(request);
+  if (unauthorized) return unauthorized;
 
   try {
     const expiredCount = await expireStaleReservations();
@@ -30,3 +31,6 @@ export async function POST(request: Request) {
     return mapDomainErrorToApiResponse(error);
   }
 }
+
+export const GET = runSweep;
+export const POST = runSweep;
