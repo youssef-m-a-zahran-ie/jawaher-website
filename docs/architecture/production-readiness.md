@@ -1,6 +1,6 @@
-# Production Readiness & Launch Engineering (Phase 12 + Phase 13 + Phase 14 + Phase 14R)
+# Production Readiness & Launch Engineering (Phase 12 + Phase 13 + Phase 14 + Phase 14R + cron-frequency fix)
 
-Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-14 (Phase 14R — §19 added, RLS closed on the staging DB; the app-to-staging connection gate remains blocked pending manual dashboard action. §18/§17 are Phase 14/13's own record, unchanged; §§1-16 are Phase 12's own record, unchanged).
+Status: audit complete, all safely actionable fixes implemented and verified. Last updated: 2026-09-21 (§20 added — `vercel.json`'s cron schedules changed from hourly to once-daily after a real Vercel Hobby deployment rejected the hourly configuration; §17.9/§18.9 corrected in place to stop describing hourly as current. §19/§18/§17 are Phase 14R/14/13's own record, otherwise unchanged; §§1-16 are Phase 12's own record, unchanged).
 
 This is the **one canonical production-readiness document** for the Website repository, per Phase 12's own instruction not to create redundant reports. It supersedes nothing else — [`premium-experience-phase-10.md`](../design/premium-experience-phase-10.md), [`production-readiness-phase-11.md`](../commerce/production-readiness-phase-11.md), and [`end-to-end-customer-commerce-readiness.md`](../commerce/end-to-end-customer-commerce-readiness.md) remain the record of their own phases' work — but consolidates the launch-readiness question those phases didn't yet ask end to end: **can this safely become a real production system serving real customers, connected to the real ERP?**
 
@@ -274,7 +274,7 @@ Neither existing sweep (`sweep-expired-reservations`, Phase 1; `retry-failed-erp
 
 - `src/lib/internal-auth.ts` (new, shared) is now the single authorization check both routes use, accepting **either** of two presentations of the same configured secret: the original `x-internal-api-secret` header (any generic scheduler — a DigitalOcean cron daemon, a manual curl) or `Authorization: Bearer <CRON_SECRET>` (Vercel Cron's own fixed, automatic convention — it attaches this header itself whenever `CRON_SECRET` is set on the project). Pinned by 5 new unit tests (`tests/unit/internal-auth.test.ts`) covering both accepted presentations and both rejection paths.
 - Both routes now export a `GET` handler (aliased to the same function as the existing `POST`) because Vercel Cron can only issue `GET` requests to a configured path — `POST` remains for any other caller.
-- `vercel.json` declares both routes on an hourly schedule (`"0 * * * *"`) as a conservative placeholder. **Explicitly unverified**: the exact cron-frequency limit on Vercel's Hobby tier could not be checked from this sandbox (no Vercel account access) — confirm the account's actual tier limits before relying on this schedule.
+- `vercel.json` originally declared both routes on an hourly schedule (`"0 * * * *"`) as a conservative placeholder, flagged at the time as unverified against a real Vercel account tier. **Now verified, the hard way**: a real Vercel Hobby deployment rejected it outright — "Hobby accounts are limited to daily cron jobs... Upgrade to the Pro plan to unlock all Cron Jobs features." Neither sweep's own business logic requires hourly execution (both are idempotent, bounded catch-up sweeps — an expired reservation or a failed ERP push found several hours late is still correctly recovered, just later), so `vercel.json` now declares both **once daily**, at distinct times (`sweep-expired-reservations` at `0 2 * * *`, `retry-failed-erp-pushes` at `30 2 * * *`, both UTC) rather than upgrading to Pro merely to keep an arbitrary hourly cadence no requirement ever mandated.
 - **The same responsibility, unchanged, for DigitalOcean later**: a plain cron daemon on that host hitting the same two paths with the same `x-internal-api-secret` header requires no code change — `vercel.json` is inert outside Vercel, so there is no duplicate mechanism to keep in sync.
 
 ### 17.10 Domain/URL safety
@@ -390,7 +390,7 @@ This is harmless on Vercel (each deployment/environment gets its own build with 
 
 ### 18.9 Cron / internal jobs — re-verified, unchanged
 
-`internal-auth.ts`, both `GET`-enabled sweep routes, and `vercel.json`'s cron declarations (Phase 13) were re-read in full: authentication logic, GET support, and `CRON_SECRET` handling are unchanged and still correct. **Still explicitly unverified** (unchanged from Phase 13, since no Vercel account access exists in either phase): whether Vercel Cron actually fires, and the real Hobby-tier frequency limit. No scheduler exists in any environment today beyond the `vercel.json` declaration itself — re-stating this plainly rather than letting the file's presence imply otherwise.
+`internal-auth.ts`, both `GET`-enabled sweep routes, and `vercel.json`'s cron declarations (Phase 13) were re-read in full: authentication logic, GET support, and `CRON_SECRET` handling are unchanged and still correct. **Still explicitly unverified** (unchanged from Phase 13, since no Vercel account access exists in either phase): whether Vercel Cron actually fires, and the real Hobby-tier frequency limit. No scheduler exists in any environment today beyond the `vercel.json` declaration itself — re-stating this plainly rather than letting the file's presence imply otherwise. *(The Hobby-tier frequency limit stated as unverified here was hit for real on the next actual deployment attempt — see §20.)*
 
 ### 18.10 Testing & verification performed this phase
 
@@ -502,3 +502,24 @@ No source files required changing this phase (RLS was applied directly to the st
 1. Retrieve the real staging `DATABASE_URL` from the Supabase dashboard (§19.3) — the single dependency that, once resolved, unblocks §19.4/§19.5/§19.6 with no further code changes expected.
 2. GitHub repository creation and an actual Vercel project/deployment (unchanged from §18.11 — no credentials in this environment).
 3. An ERP sandbox does not exist and was not created (§18.2) — accepted as a permanent external dependency for this integration boundary, per explicit instruction not to bypass it.
+
+---
+
+## 20. Staging Cron Frequency Fix — Vercel Hobby Compatibility
+
+A real Vercel Hobby deployment attempt rejected `vercel.json` outright: *"Hobby accounts are limited to daily cron jobs. This cron expression (`0 * * * *`) would run more than once per day. Upgrade to the Pro plan to unlock all Cron Jobs features."* — the exact gap §17.9/§18.9 had already flagged as unverified.
+
+**Fix**: both cron entries changed from hourly to once daily, at distinct times so they don't collide:
+
+| Route | Was | Now |
+|---|---|---|
+| `/api/v1/internal/inventory/sweep-expired-reservations` | `0 * * * *` (hourly) | `0 2 * * *` (daily, 02:00 UTC) |
+| `/api/v1/internal/orders/retry-failed-erp-pushes` | `0 * * * *` (hourly) | `30 2 * * *` (daily, 02:30 UTC) |
+
+**Why daily is correct, not just cheapest**: both sweeps are idempotent, bounded catch-up jobs, not real-time requirements — `expireStaleReservations` only ever finds reservations already past their TTL (checking once daily just means an expired hold is freed up to ~24h later than it could be, not that it's ever missed), and `retryFailedErpPushes` only ever finds orders already `erpPushStatus: FAILED` (a customer's own order is unaffected either way — it was already a valid, confirmed Website order the moment it was placed, §6; this sweep only closes the ERP-side bookkeeping gap). Neither route's own business logic, tests, or any other part of this codebase asserts or requires hourly execution — confirmed by grep across `src`/`tests` before making this change. Upgrading to Vercel Pro to preserve an hourly cadence nothing actually required would have been solving a self-imposed constraint, not a real one.
+
+**Unchanged, verified re-read before and after this fix**: `checkInternalRequestAuthorized` (`src/lib/internal-auth.ts`), both routes' `GET`/`POST` handlers, and `CRON_SECRET` handling — none of this depends on schedule frequency, and none of it was touched.
+
+**Production, deliberately not redesigned here**: this is a staging-only constraint of Vercel's Hobby tier, not a statement about what production needs. When production moves to the self-hosted DigitalOcean target (§1's already-established architecture — "Vercel for preview only"), the same two endpoints are triggered by that host's own cron mechanism (a plain daemon, `cron.d` entry, or systemd timer hitting the same paths with the same `x-internal-api-secret` header — §17.9's "no code change needed" point, unaffected by this fix) at whatever cadence production operations actually decides — hourly-class, matching the ERP-side precedent `erp-integration-reconciliation.md` references, or otherwise. That decision is out of scope here and was not made.
+
+**Verification performed**: `vercel.json` re-parsed as valid JSON (`node -e "require('./vercel.json')"`, 2 cron entries, both fields present); `npm run typecheck`, `npm run lint`, `npx vitest run`, `npm run build` all re-run after the change — no source file needed to change, so no behavioral test surface was affected (confirmed: no test in `tests/` asserts on cron schedule strings). Full results in §20's own final report to the user, not duplicated here.
