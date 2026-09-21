@@ -28,8 +28,25 @@ const cspHeader = `
   .trim();
 
 const nextConfig: NextConfig = {
-  // Lean standalone build for the Dockerfile — see docker-compose.yml/Dockerfile.
-  output: "standalone",
+  // Lean standalone build for the Dockerfile (docker-compose.yml/Dockerfile
+  // COPY --from=builder /app/.next/standalone, then `CMD ["node",
+  // "server.js"]` — that entrypoint only exists in standalone output).
+  //
+  // NOT for Vercel: found the hard way — a real Vercel build got through
+  // TypeScript, env validation, and all 32 pages, then failed at Vercel's
+  // own post-build step ("onBuildComplete from Vercel") with
+  // `ENOENT: .next/next-server.js.nft.json`. Vercel does its own file
+  // tracing/packaging for serverless functions and expects the standard
+  // (non-standalone) `.next` output layout; `output: "standalone"`
+  // restructures that layout for a self-hosted Node server instead,
+  // which is exactly what Vercel's own docs say this option is
+  // unnecessary — and here, actively incompatible — for.
+  //
+  // `VERCEL` is the platform's own documented build-time signal (set to
+  // "1" automatically by both `vercel build` and Vercel's build
+  // environment) — never set locally or in the Dockerfile, so this stays
+  // "standalone" for every build that isn't actually running on Vercel.
+  output: process.env.VERCEL ? undefined : "standalone",
   async headers() {
     return [
       {
