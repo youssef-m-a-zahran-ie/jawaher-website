@@ -1,10 +1,10 @@
 import { Link } from "@/ui/primitives/link";
 import { cn } from "@/lib/cn";
 import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
-import type { CategoryInfo } from "@/ui/commerce/categories";
+import type { CategoryCardData } from "@/ui/commerce/types";
 
 export type CategoryTileProps = {
-  category: CategoryInfo;
+  category: CategoryCardData;
   /** Larger tile for the homepage's business-guided dates emphasis — same card, same system, just bigger (docs/design/design-decisions.md). */
   size?: "md" | "lg";
   className?: string;

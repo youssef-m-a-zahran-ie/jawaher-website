@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { breadcrumbJsonLd } from "@/lib/structured-data";
 import { catalogService } from "@/modules/catalog";
-import { getCategoryBySlug } from "@/ui/commerce/categories";
+import { getCategoryPresentation } from "@/ui/commerce/categories";
 import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Breadcrumb } from "@/ui/primitives/breadcrumb";
@@ -28,11 +28,24 @@ type PageProps = { params: Promise<{ category: string }> };
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * Category Catalog Reconnection — the existence check and `name` now come
+ * from `catalogService.getCategory(slug)` (real `Category` row), not the
+ * old static `getCategoryBySlug`. This closes a real, previously-existing
+ * gap: a category present in the database but absent from the static list
+ * would have 404'd here even though it had real products; a category
+ * removed from the static list but still in the database would have kept
+ * 404ing forever regardless of the database's own state. `description`
+ * remains presentation-only (`getCategoryPresentation`, no such column on
+ * `Category`) — falls back to an empty string for a category with no
+ * presentation entry, same as `catalog-adapters.ts`'s `toCategoryCardData`.
+ */
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { category: slug } = await params;
-  const category = getCategoryBySlug(slug);
+  const category = await catalogService.getCategory(slug);
   if (!category) return {};
-  return { title: category.name, description: category.description, alternates: { canonical: `/shop/${slug}` } };
+  const description = getCategoryPresentation(slug)?.description;
+  return { title: category.name, description, alternates: { canonical: `/shop/${slug}` } };
 }
 
 /**
@@ -48,10 +61,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
  */
 export default async function CategoryPage({ params }: PageProps) {
   const { category: slug } = await params;
-  const category = getCategoryBySlug(slug);
+  const category = await catalogService.getCategory(slug);
   if (!category) notFound();
 
   const products = toProductCardDataList(await catalogService.listProductsByCategory(slug));
+  const description = getCategoryPresentation(slug)?.description ?? "";
   const breadcrumbItems = [
     { label: "الرئيسية", href: "/" },
     { label: "المتجر", href: "/shop" },
@@ -64,7 +78,7 @@ export default async function CategoryPage({ params }: PageProps) {
       <ViewTracker event="view_category" params={{ category: category.slug }} />
       <Breadcrumb items={breadcrumbItems} />
       <h1 className="mb-2 mt-4 text-h1 font-extrabold text-text-primary">{category.name}</h1>
-      <p className="mb-8 max-w-xl text-body text-text-secondary">{category.description}</p>
+      <p className="mb-8 max-w-xl text-body text-text-secondary">{description}</p>
 
       {products.length > 0 ? (
         <ProductGrid products={products} />

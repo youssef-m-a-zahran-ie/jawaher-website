@@ -1,11 +1,13 @@
 import { Search, UserRound } from "lucide-react";
 
+import { logger } from "@/lib/logger";
+import { catalogService } from "@/modules/catalog";
 import { cn } from "@/lib/cn";
 import { JawaherPalmIcon } from "@/ui/brand/jawaher-mark";
 import { PageContainer } from "@/ui/primitives/page-container";
 import { Link } from "@/ui/primitives/link";
 import { HeaderActions } from "@/ui/site/header-actions";
-import { NAV_ITEMS } from "@/ui/site/nav-items";
+import { buildNavItems } from "@/ui/site/nav-items";
 
 /** Matches IconButton's ghost/md visual language on an <a> — IconButton itself renders a <button>, which can't nest inside this Link's <a> (ProductCard's comment explains the same constraint). */
 const iconLinkClass = cn(
@@ -20,11 +22,29 @@ const desktopNavLinkClass =
 /**
  * The real site shell header — desktop nav is plain server-rendered links
  * (docs/ux/ux-specification.md §3's hover-dropdown is deferred, see
- * NAV_ITEMS' comment); cart/mobile-nav state lives in the HeaderActions
- * client island only. Sticky, per §3 — the "compresses past ~80px" detail
- * is optional ("may compress") and left for a later polish pass.
+ * `buildNavItems`' own comment); cart/mobile-nav state lives in the
+ * HeaderActions client island only. Sticky, per §3 — the "compresses past
+ * ~80px" detail is optional ("may compress") and left for a later polish
+ * pass.
+ *
+ * Category Catalog Reconnection — now an async Server Component: nav
+ * categories come from `catalogService.listCategories()` (`cache()`-
+ * deduped against Footer's/the homepage's own call in the same request,
+ * see service.ts). The fetch is wrapped in try/catch and falls back to an
+ * empty category list, NEVER left to throw — this component renders on
+ * every single page via the root layout, outside any page-level
+ * `error.tsx` boundary, so an uncaught failure here would take down the
+ * entire site shell on a database outage, not just the section that
+ * needed the data (the exact class of bug the homepage's own product
+ * fetch already guards against — see `(storefront)/page.tsx`'s comment).
+ * `buildNavItems([])` still returns the non-category items, so navigation
+ * degrades to "شop / تجربة المنتجات / من نحن / تواصل معنا" rather than
+ * disappearing.
  */
-export function Header() {
+export async function Header() {
+  const categories = await loadHeaderCategories();
+  const navItems = buildNavItems(categories);
+
   return (
     <header className="sticky top-0 z-[var(--z-sticky)] border-b border-border bg-surface">
       <PageContainer className="flex h-16 items-center justify-between gap-4 sm:h-20">
@@ -34,7 +54,7 @@ export function Header() {
         </Link>
 
         <nav aria-label="التنقل الرئيسي" className="hidden items-center gap-6 lg:flex">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <Link key={item.href} href={item.href} variant="text" className={desktopNavLinkClass}>
               {item.label}
             </Link>
@@ -48,9 +68,18 @@ export function Header() {
           <Link href="/account" aria-label="الحساب" className={cn(iconLinkClass, "hidden sm:inline-flex")}>
             <UserRound className="size-5" aria-hidden="true" />
           </Link>
-          <HeaderActions navItems={NAV_ITEMS} />
+          <HeaderActions navItems={navItems} />
         </div>
       </PageContainer>
     </header>
   );
+}
+
+async function loadHeaderCategories() {
+  try {
+    return await catalogService.listCategories();
+  } catch (err) {
+    logger.warn({ err }, "header: category fetch failed — showing non-category nav items only");
+    return [];
+  }
 }

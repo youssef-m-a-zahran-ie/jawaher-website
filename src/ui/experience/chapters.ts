@@ -2,7 +2,7 @@ import type { CategorySlug } from "@/ui/commerce/categories";
 
 export type ExperienceChapter = {
   category: CategorySlug;
-  /** Arabic category name — matches CategoryInfo.name exactly. */
+  /** Arabic category name — matches the real `Category.name` for this slug (Category Catalog Reconnection). */
   name: string;
   /** requirements/website-functional-requirements.md §"storytelling objective" table — quoted, not paraphrased, per category. */
   storytellingObjective: string;

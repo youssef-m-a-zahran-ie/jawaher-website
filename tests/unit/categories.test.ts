@@ -1,33 +1,39 @@
 import { describe, expect, it } from "vitest";
 
-import { CATEGORIES, getCategoryBySlug } from "@/ui/commerce/categories";
-import { MOCK_PRODUCTS } from "@/ui/commerce/mock-products";
+import { getCategoryPresentation, type CategorySlug } from "@/ui/commerce/categories";
 
-describe("CATEGORIES", () => {
-  it("has exactly the five approved categories", () => {
-    expect(CATEGORIES).toHaveLength(5);
-  });
+/**
+ * Category Catalog Reconnection — this file used to test the static
+ * `CATEGORIES` array as the source of category identity (slug/name). That
+ * role now belongs to the real database (`catalogService.listCategories()`
+ * — see `tests/integration/catalog-storefront.test.ts` for those,
+ * DB-dependent, tests). What's left here is presentation-only: the icon/
+ * description/"featured" config, tested directly since it has no database
+ * dependency at all.
+ */
+const KNOWN_SLUGS: CategorySlug[] = ["dates", "honey", "oils", "nuts", "ghee"];
 
-  it("has unique slugs", () => {
-    const slugs = CATEGORIES.map((category) => category.slug);
-    expect(new Set(slugs).size).toBe(slugs.length);
-  });
-
-  it("has exactly one featured category (dates, per the business's sales-mix guidance)", () => {
-    const featured = CATEGORIES.filter((category) => category.featured);
-    expect(featured).toHaveLength(1);
-    expect(featured[0]?.slug).toBe("dates");
-  });
-
-  it("every category name matches at least one mock product's category exactly", () => {
-    const mockCategoryNames = new Set(MOCK_PRODUCTS.map((product) => product.category));
-    for (const category of CATEGORIES) {
-      expect(mockCategoryNames.has(category.name)).toBe(true);
+describe("getCategoryPresentation", () => {
+  it("has a presentation entry for each of the five known launch categories", () => {
+    for (const slug of KNOWN_SLUGS) {
+      expect(getCategoryPresentation(slug)).toBeDefined();
     }
   });
 
-  it("getCategoryBySlug finds a known slug and returns undefined for an unknown one", () => {
-    expect(getCategoryBySlug("dates")?.name).toBe("تمور");
-    expect(getCategoryBySlug("not-a-category")).toBeUndefined();
+  it("every known entry has a non-empty description and an icon component", () => {
+    for (const slug of KNOWN_SLUGS) {
+      const presentation = getCategoryPresentation(slug);
+      expect(presentation?.description.length).toBeGreaterThan(0);
+      expect(presentation?.icon).toBeDefined();
+    }
+  });
+
+  it("has exactly one featured category (dates, per the business's sales-mix guidance)", () => {
+    const featured = KNOWN_SLUGS.filter((slug) => getCategoryPresentation(slug)?.featured);
+    expect(featured).toEqual(["dates"]);
+  });
+
+  it("returns undefined for a slug with no presentation entry, rather than throwing", () => {
+    expect(getCategoryPresentation("not-a-category")).toBeUndefined();
   });
 });

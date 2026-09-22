@@ -1,5 +1,8 @@
-import type { ProductView, VariantView } from "@/modules/catalog";
-import type { ProductCardData } from "@/ui/commerce/types";
+import { Package } from "lucide-react";
+
+import type { CategoryView, ProductView, VariantView } from "@/modules/catalog";
+import { getCategoryPresentation } from "@/ui/commerce/categories";
+import type { CategoryCardData, ProductCardData } from "@/ui/commerce/types";
 
 /**
  * Phase 9.1 — the ONLY place a real `catalogService` result gets reshaped
@@ -51,4 +54,30 @@ export function toProductCardData(product: ProductView): ProductCardData | null 
 
 export function toProductCardDataList(products: ProductView[]): ProductCardData[] {
   return products.map(toProductCardData).filter((p): p is ProductCardData => p !== null);
+}
+
+/**
+ * Category Catalog Reconnection — the ONLY place a real `catalogService`
+ * category result gets decorated with presentation-only data (icon,
+ * marketing description, "featured"). `slug`/`name` below are always the
+ * real database values, never overridden. A category with no presentation
+ * entry (e.g. a new one added later via ERP sync, before this project's
+ * presentation config is updated for it) still renders — a generic
+ * fallback icon and an empty description, never a crash or a fabricated
+ * description — see `ui/commerce/categories.ts`'s own comment on why the
+ * lookup is intentionally open rather than a closed union.
+ */
+export function toCategoryCardData(category: CategoryView): CategoryCardData {
+  const presentation = getCategoryPresentation(category.slug);
+  return {
+    slug: category.slug,
+    name: category.name,
+    description: presentation?.description ?? "",
+    icon: presentation?.icon ?? Package,
+    featured: presentation?.featured,
+  };
+}
+
+export function toCategoryCardDataList(categories: CategoryView[]): CategoryCardData[] {
+  return categories.map(toCategoryCardData);
 }

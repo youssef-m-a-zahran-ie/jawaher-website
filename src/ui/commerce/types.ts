@@ -1,3 +1,5 @@
+import type { ComponentType } from "react";
+
 import type { Money } from "@/domain/money";
 import type { BadgeVariant } from "@/ui/primitives/badge";
 
@@ -41,4 +43,21 @@ export type ProductCardData = {
   primaryVariantId: string;
   imageAlt: string;
   badge?: { label: string; variant: BadgeVariant };
+};
+
+/**
+ * Category Catalog Reconnection — `slug`/`name` are real catalog data
+ * (`catalogService.listCategories()`/`getCategory()`, ultimately
+ * `Category.slug`/`Category.name`); `description`/`icon`/`featured` are
+ * presentation-only, decorated on top by `catalog-adapters.ts`'s
+ * `toCategoryCardData` from `ui/commerce/categories.ts`'s config — never
+ * the other way around. Mirrors `ProductCardData`'s own split between
+ * real catalog fields and presentation-only ones (e.g. `badge`).
+ */
+export type CategoryCardData = {
+  slug: string;
+  name: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+  featured?: boolean;
 };

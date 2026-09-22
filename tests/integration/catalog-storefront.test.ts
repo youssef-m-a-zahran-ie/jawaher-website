@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { db } from "@/lib/db";
 import { catalogService } from "@/modules/catalog";
-import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
+import { toCategoryCardDataList, toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { isDatabaseAvailable } from "./helpers/db-availability";
 import { cleanupTestData, createTestSessionAndCart } from "./helpers/fixtures";
 
@@ -155,5 +155,53 @@ describe.skipIf(!dbAvailable)("catalog storefront reconnection", () => {
 
     const byCategory = await catalogService.listProductsByCategory(category.slug);
     expect(byCategory.find((p) => p.id === product.id)?.variants[0]?.availability).toBe("low_stock");
+  });
+
+  /**
+   * Category Catalog Reconnection — the same real-data-path proof as the
+   * product tests above, for `Header`/`Footer`/the homepage/`/shop/[category]`'s
+   * now-real category source.
+   */
+  describe("categories", () => {
+    it("catalogService.listCategories() surfaces a real seeded category, ordered by sortOrder", async () => {
+      const first = await db.category.create({
+        data: { slug: `test-cat-a-${runId}`, name: `فئة أ ${runId}`, sortOrder: 100 },
+      });
+      const second = await db.category.create({
+        data: { slug: `test-cat-b-${runId}`, name: `فئة ب ${runId}`, sortOrder: 99 },
+      });
+      categoryIds.push(first.id, second.id);
+
+      const categories = await catalogService.listCategories();
+      const ids = categories.map((c) => c.id);
+      expect(ids).toContain(first.id);
+      expect(ids).toContain(second.id);
+      // sortOrder 99 (second) must list before sortOrder 100 (first) — real ordering, not insertion order.
+      expect(ids.indexOf(second.id)).toBeLessThan(ids.indexOf(first.id));
+    });
+
+    it("catalogService.getCategory(slug) returns the real category — the /shop/[category] page's existence check", async () => {
+      const category = await db.category.create({ data: { slug: `test-cat-get-${runId}`, name: `فئة ${runId}` } });
+      categoryIds.push(category.id);
+
+      const found = await catalogService.getCategory(category.slug);
+      expect(found?.id).toBe(category.id);
+      expect(found?.name).toBe(category.name);
+    });
+
+    it("catalogService.getCategory(slug) returns null for an unknown slug — drives notFound()", async () => {
+      expect(await catalogService.getCategory("this-category-does-not-exist")).toBeNull();
+    });
+
+    it("toCategoryCardDataList(...) decorates a real category, falling back to a generic icon/empty description for a slug with no presentation entry", async () => {
+      const category = await db.category.create({ data: { slug: `test-cat-c-${runId}`, name: `فئة ج ${runId}` } });
+      categoryIds.push(category.id);
+
+      const cards = toCategoryCardDataList(await catalogService.listCategories());
+      const card = cards.find((c) => c.slug === category.slug);
+      expect(card?.name).toBe(category.name); // real catalog data, never overridden
+      expect(card?.description).toBe(""); // no presentation entry for this test slug
+      expect(card?.icon).toBeDefined(); // still gets a usable (generic) icon, never undefined
+    });
   });
 });

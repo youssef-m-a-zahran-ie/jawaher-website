@@ -1,5 +1,5 @@
 export { catalogService } from "@/modules/catalog/service";
-export type { ProductView, VariantView } from "@/modules/catalog/service";
+export type { CategoryView, ProductView, VariantView } from "@/modules/catalog/service";
 export {
   deriveAvailability,
   getAvailableQuantity,

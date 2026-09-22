@@ -5,7 +5,6 @@ import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { SITE_URL } from "@/lib/site-url";
 import { catalogService } from "@/modules/catalog";
-import { CATEGORIES } from "@/ui/commerce/categories";
 
 const POLICY_SLUGS = ["shipping", "returns", "payment", "privacy", "terms"];
 
@@ -49,12 +48,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticEntries: MetadataRoute.Sitemap = [
     { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
     { url: `${SITE_URL}/shop`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
-    ...CATEGORIES.map((category) => ({
-      url: `${SITE_URL}/shop/${category.slug}`,
-      lastModified: now,
-      changeFrequency: "weekly" as const,
-      priority: 0.8,
-    })),
     { url: `${SITE_URL}/about`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
     { url: `${SITE_URL}/contact`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
     ...POLICY_SLUGS.map((slug) => ({
@@ -64,6 +57,24 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.3,
     })),
   ];
+
+  // Category Catalog Reconnection — category URLs now come from
+  // `catalogService.listCategories()` (was the static `CATEGORIES`
+  // constant), same try/catch-degrades-to-nothing pattern as products
+  // below, for the same reason: a temporarily unreachable database must
+  // produce a smaller sitemap, never a 500.
+  let categoryEntries: MetadataRoute.Sitemap = [];
+  try {
+    const categories = await catalogService.listCategories();
+    categoryEntries = categories.map((category) => ({
+      url: `${SITE_URL}/shop/${category.slug}`,
+      lastModified: now,
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
+    }));
+  } catch (err) {
+    logger.warn({ err }, "sitemap: category fetch failed — omitting category URLs");
+  }
 
   let productEntries: MetadataRoute.Sitemap = [];
   try {
@@ -80,5 +91,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     logger.warn({ err }, "sitemap: catalog fetch failed — returning static pages only");
   }
 
-  return [...staticEntries, ...productEntries];
+  return [...staticEntries, ...categoryEntries, ...productEntries];
 }

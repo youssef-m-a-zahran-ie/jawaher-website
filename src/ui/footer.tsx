@@ -1,4 +1,5 @@
-import { CATEGORIES } from "@/ui/commerce/categories";
+import { logger } from "@/lib/logger";
+import { catalogService, type CategoryView } from "@/modules/catalog";
 import { JawaherPalmIcon } from "@/ui/brand/jawaher-mark";
 import { JawaherPattern } from "@/ui/brand/jawaher-pattern";
 import { PageContainer } from "@/ui/primitives/page-container";
@@ -22,9 +23,16 @@ const footerLinkClass = "text-body-sm text-text-on-dark/80 no-underline transiti
  * of them would be exactly the kind of fabricated business fact this
  * phase's brief forbids. The Contact page (a real form) is the honest
  * stand-in until real contact details are supplied.
+ *
+ * Category Catalog Reconnection — async, same `catalogService.listCategories()`
+ * + try/catch-to-empty-array pattern as `Header` (that component's own
+ * comment explains why the fallback is mandatory, not optional: this also
+ * renders on every page via the root layout). A failed fetch here means
+ * the "الفئات" column simply lists only "كل المنتجات" — never a broken footer.
  */
-export function Footer() {
+export async function Footer() {
   const year = new Date().getFullYear();
+  const categories = await loadFooterCategories();
 
   return (
     <footer className="relative overflow-hidden bg-surface-dark">
@@ -46,7 +54,7 @@ export function Footer() {
                 كل المنتجات
               </Link>
             </li>
-            {CATEGORIES.map((category) => (
+            {categories.map((category) => (
               <li key={category.slug}>
                 <Link href={`/shop/${category.slug}`} className={footerLinkClass}>
                   {category.name}
@@ -92,4 +100,13 @@ export function Footer() {
       </div>
     </footer>
   );
+}
+
+async function loadFooterCategories(): Promise<CategoryView[]> {
+  try {
+    return await catalogService.listCategories();
+  } catch (err) {
+    logger.warn({ err }, "footer: category fetch failed — showing 'كل المنتجات' only");
+    return [];
+  }
 }

@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import { Money } from "@/domain/money";
 import { catalogRepository, type CatalogProductRow, type CatalogVariantRow } from "@/modules/catalog/repository";
 import {
@@ -30,15 +32,55 @@ export type ProductView = {
   variants: VariantView[];
 };
 
+/**
+ * Category Catalog Reconnection — the real catalog identity only
+ * (`Category.slug`/`name`/`sortOrder`). Deliberately narrower than the
+ * raw Prisma row (which also carries `erpCategoryId`/`createdAt`/
+ * `updatedAt` — internal correlation/bookkeeping fields with no UI/API
+ * use), mirroring `ProductView`'s own precedent of never leaking a raw
+ * Prisma row past this service boundary. Presentation-only decoration
+ * (icon, marketing description, "featured") is added on top of this by
+ * `ui/commerce/catalog-adapters.ts`'s `toCategoryCardData` — never here,
+ * so this stays reusable, brand-agnostic domain data.
+ */
+export type CategoryView = {
+  id: string;
+  slug: string;
+  name: string;
+  sortOrder: number;
+};
+
+function mapCategory(row: { id: string; slug: string; name: string; sortOrder: number }): CategoryView {
+  return { id: row.id, slug: row.slug, name: row.name, sortOrder: row.sortOrder };
+}
+
 /** Public interface — module-boundaries.md's Catalog row (getCategory/getProduct/listProducts). */
 export const catalogService = {
-  async getCategory(slug: string) {
-    return catalogRepository.findCategoryBySlug(slug);
-  },
+  /**
+   * `cache()`-wrapped (React's per-request dedup, not a cross-request
+   * cache): `/shop/[category]`'s own `generateMetadata` and page component
+   * both call this with the same slug in the same request — without this,
+   * that would be two real database round trips for what is, from the
+   * caller's perspective, one read. Never stale across requests — a fresh
+   * cache scope is created per request by the framework.
+   */
+  getCategory: cache(async (slug: string): Promise<CategoryView | null> => {
+    const row = await catalogRepository.findCategoryBySlug(slug);
+    return row ? mapCategory(row) : null;
+  }),
 
-  async listCategories() {
-    return catalogRepository.listCategories();
-  },
+  /**
+   * `cache()`-wrapped for the same reason as `getCategory` — the site
+   * shell (`Header`/`Footer`, both rendered on every page) and a given
+   * page's own category needs (e.g. the homepage's featured-category
+   * tile) all call this once per request; without this, every one of
+   * those would be a separate real query for what is always the same
+   * five-or-so-row table read within that single request.
+   */
+  listCategories: cache(async (): Promise<CategoryView[]> => {
+    const rows = await catalogRepository.listCategories();
+    return rows.map(mapCategory);
+  }),
 
   /**
    * The PDP's data source. Unlike the listing methods below, this

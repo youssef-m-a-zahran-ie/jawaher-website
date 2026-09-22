@@ -1,7 +1,6 @@
 import { logger } from "@/lib/logger";
 import { catalogService } from "@/modules/catalog";
-import { toProductCardDataList } from "@/ui/commerce/catalog-adapters";
-import { CATEGORIES } from "@/ui/commerce/categories";
+import { toCategoryCardDataList, toProductCardDataList } from "@/ui/commerce/catalog-adapters";
 import { CategoryTile } from "@/ui/commerce/category-tile";
 import { ProductGrid } from "@/ui/commerce/product-grid";
 import { Hero } from "@/ui/home/hero";
@@ -40,6 +39,15 @@ import { PageContainer } from "@/ui/primitives/page-container";
  * and PDP are a customer's deliberate destination for catalog data
  * specifically, so failing loudly there remains correct and is left
  * untouched — this fix is scoped to the homepage only.
+ *
+ * Category Catalog Reconnection — the category tiles below now come from
+ * `catalogService.listCategories()` too (was the static `CATEGORIES`
+ * constant), decorated via `toCategoryCardDataList` (icon/description
+ * from `ui/commerce/categories.ts`'s presentation config — see that
+ * file's own comment). Same try/catch-to-empty-array resilience as
+ * products, for the same reason: a database outage must not blank the
+ * whole homepage. An empty result skips the "تسوق حسب الفئة" section
+ * entirely rather than rendering it with nothing in it.
  */
 export const dynamic = "force-dynamic";
 
@@ -54,24 +62,36 @@ async function loadHomepageProducts() {
   }
 }
 
+async function loadHomepageCategories() {
+  try {
+    return toCategoryCardDataList(await catalogService.listCategories());
+  } catch (err) {
+    logger.warn({ err }, "homepage: category fetch failed — hiding the 'shop by category' section");
+    return [];
+  }
+}
+
 export default async function HomePage() {
-  const featuredCategory = CATEGORIES.find((category) => category.featured) ?? CATEGORIES[0];
-  const otherCategories = CATEGORIES.filter((category) => category !== featuredCategory);
+  const categories = await loadHomepageCategories();
+  const featuredCategory = categories.find((category) => category.featured) ?? categories[0];
+  const otherCategories = categories.filter((category) => category !== featuredCategory);
   const products = await loadHomepageProducts();
 
   return (
     <>
       <Hero />
 
-      <PageContainer className="py-16">
-        <h2 className="mb-6 text-h2 font-extrabold text-text-primary">تسوق حسب الفئة</h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <CategoryTile category={featuredCategory} size="lg" className="col-span-2" />
-          {otherCategories.map((category) => (
-            <CategoryTile key={category.slug} category={category} />
-          ))}
-        </div>
-      </PageContainer>
+      {featuredCategory && (
+        <PageContainer className="py-16">
+          <h2 className="mb-6 text-h2 font-extrabold text-text-primary">تسوق حسب الفئة</h2>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <CategoryTile category={featuredCategory} size="lg" className="col-span-2" />
+            {otherCategories.map((category) => (
+              <CategoryTile key={category.slug} category={category} />
+            ))}
+          </div>
+        </PageContainer>
+      )}
 
       <PageContainer className="py-16">
         <h2 className="mb-6 text-h2 font-extrabold text-text-primary">منتجاتنا</h2>

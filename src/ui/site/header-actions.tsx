@@ -4,7 +4,6 @@ import { Menu, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 
 import { CartDrawerContent } from "@/ui/commerce/cart-drawer-content";
-import { CATEGORIES } from "@/ui/commerce/categories";
 import { Accordion } from "@/ui/primitives/accordion";
 import { Drawer } from "@/ui/primitives/drawer";
 import { IconButton } from "@/ui/primitives/icon-button";
@@ -69,14 +68,14 @@ export function HeaderActions({ navItems }: HeaderActionsProps) {
                 title: "الفئات",
                 content: (
                   <div className="flex flex-col gap-3">
-                    {CATEGORIES.map((category) => (
+                    {categoryLinks.map((item) => (
                       <Link
-                        key={category.slug}
-                        href={`/shop/${category.slug}`}
+                        key={item.href}
+                        href={item.href}
                         onClick={() => setNavOpen(false)}
                         className="text-body text-text-primary no-underline"
                       >
-                        {category.name}
+                        {item.label}
                       </Link>
                     ))}
                   </div>
