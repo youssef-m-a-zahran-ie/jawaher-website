@@ -2,7 +2,7 @@
 
 Conceptual domain model (entities, invariants, state transitions) and the detailed data-ownership matrix. Elaborates [`blueprint.md`](./blueprint.md) §7 with the operational columns this stage requires (sync direction, conflict authority, update trigger, failure behavior). No Prisma models or code — conceptual only.
 
-Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Order state transitions).** Last updated: 2026-09-07.
+Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Order state transitions), + the Website Administration ownership decision below (§1 Website Content/Media Asset, §2 matrix rows).** Last updated: 2026-09-22.
 
 ---
 
@@ -71,6 +71,18 @@ Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Ord
 - **Invariants:** at most one manual coupon applied per order at MVP (requirements §12 — a business rule, confirmed as a UX default in `ux-decisions.md`, not re-litigated here).
 - **Ownership:** website-owned for simple codes; any promotion with real margin impact is ERP-defined and only ever *surfaced*, never authored, by the website (blueprint §7).
 
+### Website Content / Presentation — **Website Administration ownership decision, locked 2026-09-22**
+- **Entity:** everything §15 of `technical-architecture.md` already classified as website-owned structured content — homepage sections, offer banners, category storytelling copy, Products Experience chapter content, About/FAQ/Policies, SEO metadata, and (once built) featured/collections curation and related/upsell/cross-sell associations. Already-approved decision (superseding the "not designed in this stage" note in `technical-architecture.md` §15 and `technical-decisions.md`'s CMS trigger row): the future authoring surface for this content is **an ERP-hosted "Website Administration" module** — not a website-hosted admin panel, not a new parallel admin system.
+- **Invariants:** this content stays website-owned regardless of which system's UI edits it. The ERP Website Administration module is a **control-plane UI only** — it authenticates as a privileged client and writes through a secured **Website Admin API** (already named as a future surface in `blueprint.md` §3's Admin/internal API row; not yet built). It must never become a second copy of this data living in the ERP's own Postgres schema, and the Website Admin API must never accept writes to any ERP-owned field from §2's matrix (products/variants/prices/inventory stay ERP → Website, one-way, unchanged by this decision).
+- **Ownership:** website-owned. Authored via the ERP Website Administration module; stored, served, and rendered by the website exactly as any other website-owned row in §2.
+- **External dependency:** none yet — the Website Admin API is future work (roadmap note below). Until it exists, this content has no admin authoring path and remains hardcoded in website source (the pre-existing, accepted interim state — not a regression this decision needs to fix immediately).
+
+### Website Media Asset — **Website Administration ownership decision, locked 2026-09-22**
+- **Entity:** a reference to one uploaded image/media file used somewhere on the website (product/category imagery, homepage/banner media, Products Experience assets, brand assets).
+- **Invariants:** the website's own database **never stores binary file data** — only a reference (asset id and/or URL) plus any website-specific display metadata it needs (e.g. alt text, crop/aspect hints), mirroring the "metadata only" rule the ERP's own `FileAsset` model already follows. **Upload and storage stay centralized in the ERP's existing `FileAsset`/`StorageProvider` capability** (Supabase Storage today, S3-compatible later per that model's own documented intent) — the website does not grow a second, parallel upload/storage mechanism. Public-facing website media (anything a customer's browser loads directly) needs a **permanent, cacheable delivery URL** — the ERP storage layer's current signed-URL-only mechanism (time-limited, built for internal documents like invoices) is explicitly **not sufficient** for this and needs a public/cacheable delivery path added before real website media flows through it for real.
+- **Ownership:** the binary file and its storage-provider record are ERP-owned (`FileAsset`). The reference to it, and any website-specific display metadata, is website-owned.
+- **External dependency:** the ERP `FileAsset`/`StorageProvider` capability (already built, ERP repo) plus the same future Website Admin API above for the reference to reach the website's own database.
+
 ---
 
 ## 2. Data ownership matrix
@@ -81,7 +93,7 @@ Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Ord
 | Variants/SKUs | ERP | Projection table | ERP → Website | ERP | Scheduled sync | Same as above |
 | Prices | ERP | Projection table | ERP → Website | ERP | Scheduled sync | Same as above; never partially written (all-or-nothing per record, §3) |
 | Inventory | ERP | Projection table (derived availability state) | ERP → Website | ERP | Scheduled sync | Same as above; derived state tolerates a few minutes of staleness by design |
-| Product rich content (story, photography) | Website | Content table | N/A — website-authored | Website | Content edit | N/A |
+| Product rich content (story, photography) | Website | Content table | N/A — website-authored | Website | Content edit (future: via ERP Website Administration module → Website Admin API) | N/A |
 | Customers | Website (identity) / ERP (operational mirror) | Customers table (website) + ERP reference | Website → ERP (one-way, at order time only) | Website for identity; ERP's copy is a mirror only | Order creation | If reconciliation fails, the order is still created website-side and retried per the ERP Adapter's failure handling (§4) |
 | Addresses | Website | Addresses table | N/A | Website | Customer edit | N/A |
 | Orders (commercial envelope) | Website | Orders/OrderItems tables | Website → ERP (one-way, order push) | Website | Order creation | ERP push failure → dead-letter + retry (§4/§9); the order remains valid website-side regardless |
@@ -92,5 +104,7 @@ Status: **Draft for review — Stage 0.9, + one Phase 4 reconciliation note (Ord
 | Promotions with margin impact | ERP | Projection (surfaced only) | ERP → Website | ERP | Scheduled sync | Same as prices |
 | Analytics events | Website | Event log table | N/A — generated by website interactions | Website | User/system interaction | A failed write is logged and dropped — never retried in a way that could block the triggering action (ADR-012) |
 | Cart/CartItems | Website | Cart tables | N/A | Website | Customer interaction | N/A |
+| Website content (homepage/banners/SEO/featured/collections/related/Products Experience) | Website | Content tables (future) | N/A — never ERP-schema-owned | Website | Admin edit, via ERP Website Administration module → Website Admin API (future) | N/A — until the Admin API exists, remains hardcoded in website source (accepted interim state) |
+| Website media asset references | Website | Reference/metadata column(s) only — never the binary | ERP `FileAsset` upload → reference passed to website via Website Admin API (future) | Website (the reference); ERP (the binary + its storage record) | Admin upload/attach | A missing/broken reference degrades to the website's existing placeholder treatment (`ImagePlaceholder`), never a broken page |
 
-**The rule that prevents accidental bidirectional ownership:** every row above has exactly one arrow direction for a given field. Nowhere does the website write back into an ERP-owned field, and nowhere does the ERP read a website-owned field except the two explicitly one-way exceptions that exist by design — order push (website → ERP) and customer reconciliation (website → ERP, read-and-match only, never overwriting an existing ERP customer's other fields).
+**The rule that prevents accidental bidirectional ownership:** every row above has exactly one arrow direction for a given field. Nowhere does the website write back into an ERP-owned field, and nowhere does the ERP read a website-owned field except the two explicitly one-way exceptions that exist by design — order push (website → ERP) and customer reconciliation (website → ERP, read-and-match only, never overwriting an existing ERP customer's other fields). The future Website Admin API (ERP Website Administration module → website) is a third, explicitly bounded exception to the same rule: it writes website-owned content rows only, per the two new entities above — it is not, and must never become, a path for the ERP to write any ERP-owned field's data (products/variants/prices/inventory stay ERP → website, one-way, exactly as already specified).

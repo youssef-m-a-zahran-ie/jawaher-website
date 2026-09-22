@@ -74,7 +74,7 @@ flowchart TB
 | Surface | Consumers | Examples |
 |---|---|---|
 | Customer API | Storefront frontend only | catalog browse/search, cart, checkout, orders, account, addresses |
-| Admin/internal API | Internal tooling/staff | content/offer management, order review, manual sync triggers |
+| Admin/internal API ("Website Admin API") | The ERP's Website Administration module (locked decision, 2026-09-22 — see `data-ownership.md`'s "Website Content / Presentation" and "Website Media Asset" entities) | content/offer management, order review, manual sync triggers |
 | ERP Adapter | Internal modules only, never the frontend | `getProducts`, `getPrices`, `getInventory`, `pushOrder`, `getOrderStatus`, `reconcileCustomer` |
 | Payment / Shipping adapters | Payments/Shipping modules only | authorize/capture/refund; serviceability/quote/track |
 | Analytics abstraction | Any module, fire-and-forget | `track(event, params)` |
@@ -82,6 +82,8 @@ flowchart TB
 | Webhooks/events | Internal consumers | `order.created`, `order.status_changed`, `stock.low` |
 
 Reliability rules: URI-versioned (`/api/v1/...`); one consistent error shape (code, Arabic message, field errors); idempotency keys required on order-creation/payment-confirmation endpoints; rate limiting on auth and checkout endpoints.
+
+**The Website Admin API is a control-plane surface only — it must never become a second database.** It writes website-owned content (`data-ownership.md` §2) into the website's own database; it is not a mechanism for the ERP to store or own that data itself, and it never writes to an ERP-owned field (products/variants/prices/inventory stay ERP → website, one-way, unchanged by this surface's existence).
 
 ---
 
