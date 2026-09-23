@@ -224,10 +224,16 @@ export const checkoutService = {
       }
 
       // Final availability re-check + reservation — one transaction-scoped, all-or-nothing step (technical-architecture.md §16).
+      // Passes the pre-check's own ERP numbers through so an ERP-linked
+      // variant is gated on ERP's answer (the only authoritative one),
+      // never on the local `inventoryQuantity` column, which is always 0
+      // for an ERP-synced product — see reserveInventoryForItems's own
+      // doc comment for the real bug this closes.
       await reserveInventoryForItems(
         tx,
         checkoutSessionId,
         session.cart.items.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
+        availableById,
       );
 
       const subtotal = subtotalFromCartItems(session.cart.items);

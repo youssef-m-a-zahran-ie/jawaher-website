@@ -55,6 +55,26 @@ export class InsufficientInventoryError extends Error {
 }
 
 /**
+ * The ERP branch of the reservation gate's decision, pulled out as a pure
+ * function so it is directly unit-testable without a database: ERP's
+ * pre-checked number minus already-active local reservations — never the
+ * local `inventoryQuantity` column, which stays 0 forever for an
+ * ERP-synced product. See `reserveInventoryForItems`'s own doc comment
+ * for the full reasoning and the real bug this closes.
+ */
+export function resolveErpReservationGateQuantity(erpAvailable: number, activeReservedQuantity: number): number {
+  return erpAvailable - activeReservedQuantity;
+}
+
+async function getActiveReservedQuantity(client: Db, variantId: string): Promise<number> {
+  const reserved = await client.inventoryReservation.aggregate({
+    where: { variantId, status: "ACTIVE" },
+    _sum: { quantity: true },
+  });
+  return reserved._sum.quantity ?? 0;
+}
+
+/**
  * The raw projected quantity minus every currently-ACTIVE reservation for
  * that variant — never the raw column alone. This is the one function
  * every other "is this available" check in the codebase should call
@@ -62,11 +82,8 @@ export class InsufficientInventoryError extends Error {
  */
 export async function getAvailableQuantity(client: Db, variantId: string): Promise<number> {
   const variant = await client.variant.findUniqueOrThrow({ where: { id: variantId } });
-  const reserved = await client.inventoryReservation.aggregate({
-    where: { variantId, status: "ACTIVE" },
-    _sum: { quantity: true },
-  });
-  return variant.inventoryQuantity - (reserved._sum.quantity ?? 0);
+  const reserved = await getActiveReservedQuantity(client, variantId);
+  return variant.inventoryQuantity - reserved;
 }
 
 /**
@@ -122,11 +139,32 @@ export async function getAvailableQuantitiesForVariants(
  * the second concurrent transaction to wait until the first commits (or
  * rolls back), then re-read the now-current reserved total. Verified by
  * tests/integration/inventory-concurrency.test.ts.
+ *
+ * `erpAvailableByVariantId` (Inventory Integration milestone): for a
+ * variant this map has an entry for, that number — the caller's own
+ * fresh, pre-transaction ERP pre-check (checkout's fail-closed
+ * `fetchErpAvailability` call, module header's §"ERP-AWARE AVAILABILITY"
+ * policy: "when ERP has an answer, ERP's number is used alone, full
+ * stop") — is the gate, never `variant.inventoryQuantity`. That column
+ * is permanently 0 for any ERP-synced product (catalog-sync's explicit,
+ * documented non-goal is never writing inventory), so gating an
+ * ERP-linked variant on it was a real, confirmed bug: every ERP-synced
+ * product would fail this exact check unconditionally, regardless of the
+ * pre-check having already confirmed real ERP stock moments earlier. The
+ * row lock and the active-reservation subtraction still apply exactly as
+ * before — this only replaces which "total available" number the lock
+ * protects, closing the LOCAL race between two Website checkouts that
+ * both passed the same ERP pre-check (the remaining ERP-side race — stock
+ * changing between the pre-check and this line — is the documented,
+ * accepted limitation this project has no reservation/commit ERP API to
+ * close yet). A variant with no entry in the map (never synced from ERP)
+ * is untouched: exactly the pre-existing `getAvailableQuantity` local path.
  */
 export async function reserveInventoryForItems(
   tx: Prisma.TransactionClient,
   checkoutSessionId: string,
   items: { variantId: string; quantity: number }[],
+  erpAvailableByVariantId?: Map<string, number>,
 ): Promise<string[]> {
   const reservationIds: string[] = [];
   const insufficient: string[] = [];
@@ -134,7 +172,11 @@ export async function reserveInventoryForItems(
   for (const item of items) {
     await tx.$queryRaw`SELECT id FROM variants WHERE id = ${item.variantId}::uuid FOR UPDATE`;
 
-    const available = await getAvailableQuantity(tx, item.variantId);
+    const erpAvailable = erpAvailableByVariantId?.get(item.variantId);
+    const available =
+      erpAvailable !== undefined
+        ? resolveErpReservationGateQuantity(erpAvailable, await getActiveReservedQuantity(tx, item.variantId))
+        : await getAvailableQuantity(tx, item.variantId);
     if (available < item.quantity) {
       insufficient.push(item.variantId);
       continue;

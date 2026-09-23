@@ -5,6 +5,7 @@ export {
   getAvailableQuantity,
   getAvailableQuantitiesForVariants,
   reserveInventoryForItems,
+  resolveErpReservationGateQuantity,
   releaseReservationsForCheckoutSession,
   consumeReservationsForCheckoutSession,
   expireStaleReservations,
