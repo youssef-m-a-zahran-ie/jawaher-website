@@ -158,6 +158,69 @@ describe.skipIf(!dbAvailable)("catalog storefront reconnection", () => {
   });
 
   /**
+   * Shop/Search Availability Snapshot milestone — the actual regression
+   * this milestone exists to fix: an ERP-synced variant's local
+   * `inventoryQuantity` is permanently 0 (catalog-sync never writes it),
+   * so before this milestone every real ERP product showed
+   * "out_of_stock" on every listing page unconditionally. The fix reads
+   * the non-authoritative presentation snapshot for any variant with an
+   * `erpVariantId`, never the local column.
+   */
+  it("an ERP-synced product with real ERP stock no longer appears unavailable just because local inventoryQuantity is 0", async () => {
+    const category = await db.category.create({ data: { slug: `test-cat-erp-${runId}`, name: `فئة اختبار ${runId}` } });
+    categoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { slug: `test-prod-erp-${runId}`, name: `منتج ERP اختبار ${runId}`, categoryId: category.id, erpProductId: `test-erp-prod-${runId}` },
+    });
+    const variant = await db.variant.create({
+      data: {
+        productId: product.id,
+        sku: `TEST-SKU-ERP-${runId}`,
+        erpVariantId: `test-erp-variant-${runId}`,
+        label: "1 كجم",
+        priceAmountMinor: 20000,
+        inventoryQuantity: 0, // permanently 0 by design — the snapshot must be what's read, not this column
+      },
+    });
+    await db.variantAvailabilitySnapshot.create({
+      data: {
+        variantId: variant.id,
+        erpVariantId: variant.erpVariantId!,
+        presentationStatus: "in_stock",
+        lastSuccessAt: new Date(),
+        lastAttemptAt: new Date(),
+      },
+    });
+
+    const listed = await catalogService.listAllProducts();
+    expect(listed.find((p) => p.id === product.id)?.variants[0]?.availability).toBe("in_stock");
+
+    const byCategory = await catalogService.listProductsByCategory(category.slug);
+    expect(byCategory.find((p) => p.id === product.id)?.variants[0]?.availability).toBe("in_stock");
+  });
+
+  it("an ERP-synced variant with no snapshot row yet (never refreshed) shows as unknown, never a fabricated out_of_stock", async () => {
+    const category = await db.category.create({ data: { slug: `test-cat-erp-unk-${runId}`, name: `فئة اختبار ${runId}` } });
+    categoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { slug: `test-prod-erp-unk-${runId}`, name: `منتج ERP بلا لقطة ${runId}`, categoryId: category.id },
+    });
+    await db.variant.create({
+      data: {
+        productId: product.id,
+        sku: `TEST-SKU-ERP-UNK-${runId}`,
+        erpVariantId: `test-erp-variant-unk-${runId}`,
+        label: "1 كجم",
+        priceAmountMinor: 15000,
+        inventoryQuantity: 0,
+      },
+    });
+
+    const listed = await catalogService.listAllProducts();
+    expect(listed.find((p) => p.id === product.id)?.variants[0]?.availability).toBe("unknown");
+  });
+
+  /**
    * Category Catalog Reconnection — the same real-data-path proof as the
    * product tests above, for `Header`/`Footer`/the homepage/`/shop/[category]`'s
    * now-real category source.

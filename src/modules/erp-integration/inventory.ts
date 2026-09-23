@@ -42,7 +42,11 @@ export interface ErpAvailabilityResult {
   requestId: string;
 }
 
-const MAX_IDS_PER_REQUEST = 200; // matches the ERP endpoint's own documented limit (erp-catalog-inventory-api.md §6)
+// Exported so any caller batching its OWN calls to this adapter (e.g. the
+// availability-snapshot refresh job) can align its chunk size exactly,
+// rather than hand-duplicating this number — matches the ERP endpoint's
+// own documented limit (erp-catalog-inventory-api.md §6).
+export const MAX_IDS_PER_REQUEST = 200;
 
 export const erpInventoryAdapter = {
   /**

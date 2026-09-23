@@ -18,7 +18,7 @@ export type {
   ListErpProductsResult,
   ListErpCategoriesResult,
 } from "./catalog";
-export { erpInventoryAdapter, ErpInvalidInventoryResponseError } from "./inventory";
+export { erpInventoryAdapter, ErpInvalidInventoryResponseError, MAX_IDS_PER_REQUEST } from "./inventory";
 export type { ErpAvailabilityResult } from "./inventory";
 export { erpOrderAdapter, ErpInvalidOrderResponseError, ErpOrderRejectedError } from "./orders";
 export type { PushOrderPayload, PushOrderLine, PushOrderResult, ErpOrderStatus } from "./orders";

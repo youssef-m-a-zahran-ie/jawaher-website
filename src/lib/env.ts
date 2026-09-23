@@ -75,6 +75,14 @@ const envSchema = z.object({
   /** Explicit request timeout for every ERP call (technical-architecture.md §4) — defaults to 5000ms if unset. */
   ERP_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 
+  // Shop/Search presentation availability snapshot (Inventory Integration
+  // milestone follow-up) — see docs/integration/shop-search-availability-
+  // snapshot.md. Purely a read-time freshness label ("fresh" vs "stale"),
+  // never a sales guarantee; PDP/Cart/Checkout never read this value —
+  // they call ERP live, unchanged. Approved initial default: 15 minutes.
+  // Configurable so the interval can change later with no code change.
+  AVAILABILITY_SNAPSHOT_FRESHNESS_MINUTES: z.coerce.number().int().positive().optional(),
+
   // --- Reserved for later phases (optional until implemented) ---
   // SESSION_SECRET intentionally removed here (Phase 12 environment
   // audit): src/lib/session.ts's own comment is explicit that sessions

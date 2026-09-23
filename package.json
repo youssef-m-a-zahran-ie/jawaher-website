@@ -19,7 +19,8 @@
     "db:seed": "node prisma/seed.ts",
     "db:studio": "prisma studio",
     "catalog-sync:full": "tsx scripts/run-catalog-sync.ts --full",
-    "catalog-sync:incremental": "tsx scripts/run-catalog-sync.ts --incremental"
+    "catalog-sync:incremental": "tsx scripts/run-catalog-sync.ts --incremental",
+    "availability-snapshot:refresh": "tsx scripts/run-availability-snapshot-refresh.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

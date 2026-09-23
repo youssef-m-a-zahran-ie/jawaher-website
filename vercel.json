@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     { "path": "/api/v1/internal/inventory/sweep-expired-reservations", "schedule": "0 2 * * *" },
-    { "path": "/api/v1/internal/orders/retry-failed-erp-pushes", "schedule": "30 2 * * *" }
+    { "path": "/api/v1/internal/orders/retry-failed-erp-pushes", "schedule": "30 2 * * *" },
+    { "path": "/api/v1/internal/availability-snapshot/refresh", "schedule": "0 4 * * *" }
   ]
 }

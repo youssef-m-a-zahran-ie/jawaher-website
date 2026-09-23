@@ -11,6 +11,8 @@ import {
 } from "@/modules/catalog/inventory";
 import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { env } from "@/lib/env";
+import { getSnapshotsForVariantIds, resolveListingAvailability, resolveFreshnessWindowMs } from "@/modules/availability-snapshot";
 
 export type VariantView = {
   id: string;
@@ -204,20 +206,53 @@ async function applyErpAvailabilityOverlay(
 }
 
 /**
- * Phase 12 — one batched query for every variant across however many
- * product rows are being rendered, instead of `mapVariant` calling
- * `getAvailableQuantity` (its own DB round trip) per variant — see that
- * function's own comment in inventory.ts for the full N+1 finding. Every
- * row here already carries `inventoryQuantity` (the repository's
- * `include: { variants: ... }` selects full scalar columns), so this
- * needs only the reservation side, batched.
+ * Phase 12, corrected by the Shop/Search Availability Snapshot milestone
+ * — one batched read for every variant across however many product rows
+ * are being rendered, instead of one ERP/DB round trip per variant. An
+ * ERP-linked variant (`erpVariantId` set) is resolved from the
+ * non-authoritative presentation snapshot (docs/integration/shop-search-
+ * availability-snapshot.md) — NEVER from the permanently-zero local
+ * `inventoryQuantity` column, which catalog-sync deliberately never
+ * writes for a real ERP product (this was the actual root cause of every
+ * ERP-synced product showing as unavailable on listing pages before this
+ * milestone). A Website-only variant (no `erpVariantId` — there is no
+ * ERP claim to snapshot for it at all) is untouched: still the
+ * pre-existing local `inventoryQuantity`-derived path.
+ *
+ * This function is used by BOTH listing pages (as-is, no further
+ * overlay) AND `getProduct()`'s own base map, which then applies a LIVE
+ * ERP overlay on top for PDP (`applyErpAvailabilityOverlay`, unchanged)
+ * — so PDP's authority is unaffected; only its overlay-FAILURE fallback
+ * quality improves (a recent snapshot instead of a permanently-wrong
+ * local zero).
  */
-async function buildAvailabilityMap(rows: CatalogProductRow[]): Promise<Map<string, number>> {
-  const variants = rows.flatMap((row) => row.variants.map((v) => ({ id: v.id, inventoryQuantity: v.inventoryQuantity })));
-  return getAvailableQuantitiesForVariants(db, variants);
+async function buildAvailabilityMap(rows: CatalogProductRow[]): Promise<Map<string, AvailabilityState>> {
+  const allVariants = rows.flatMap((row) => row.variants);
+  const erpLinked = allVariants.filter((v) => v.erpVariantId !== null);
+  const localOnly = allVariants.filter((v) => v.erpVariantId === null);
+
+  const [snapshots, localAvailability] = await Promise.all([
+    getSnapshotsForVariantIds(erpLinked.map((v) => v.id)),
+    getAvailableQuantitiesForVariants(
+      db,
+      localOnly.map((v) => ({ id: v.id, inventoryQuantity: v.inventoryQuantity }))
+    ),
+  ]);
+
+  const now = new Date();
+  const freshnessWindowMs = resolveFreshnessWindowMs(env.AVAILABILITY_SNAPSHOT_FRESHNESS_MINUTES);
+
+  const result = new Map<string, AvailabilityState>();
+  for (const v of erpLinked) {
+    result.set(v.id, resolveListingAvailability(snapshots.get(v.id), now, freshnessWindowMs).status);
+  }
+  for (const v of localOnly) {
+    result.set(v.id, deriveAvailability(localAvailability.get(v.id) ?? 0));
+  }
+  return result;
 }
 
-function mapProduct(row: CatalogProductRow, availability: Map<string, number>): ProductView {
+function mapProduct(row: CatalogProductRow, availability: Map<string, AvailabilityState>): ProductView {
   return {
     id: row.id,
     slug: row.slug,
@@ -229,19 +264,18 @@ function mapProduct(row: CatalogProductRow, availability: Map<string, number>): 
   };
 }
 
-function mapVariant(row: CatalogVariantRow, availability: Map<string, number>): VariantView {
-  // Falls back to a fresh per-variant read only if the batch map is
-  // somehow missing this id (defensive — it never should be, since the
-  // map is always built from these exact same rows) rather than silently
-  // treating an unknown variant as available.
-  const available = availability.get(row.id) ?? 0;
+function mapVariant(row: CatalogVariantRow, availability: Map<string, AvailabilityState>): VariantView {
+  // Falls back to "unknown" (never a fabricated "available") only if the
+  // batch map is somehow missing this id — defensive; it never should be,
+  // since the map is always built from these exact same rows.
+  const state = availability.get(row.id) ?? "unknown";
   return {
     id: row.id,
     sku: row.sku,
     label: row.label,
     price: Money.fromMinor(row.priceAmountMinor),
     compareAtPrice: row.compareAtAmountMinor != null ? Money.fromMinor(row.compareAtAmountMinor) : null,
-    availability: deriveAvailability(available),
+    availability: state,
     active: row.active,
   };
 }

@@ -40,7 +40,7 @@ enum ProductStatus {
 }
 
 model Category {
-  id        String   @id @default(uuid())
+  id            String   @id @default(uuid())
   /// Reference only, never the primary key — mirrors Product.erpProductId's
   /// own convention exactly. Added Phase 9.4: the Category ERP Catalog API
   /// DTO (erp-catalog-inventory-api.md §7) has no field the Website could
@@ -113,10 +113,11 @@ model Variant {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  product      Product                @relation(fields: [productId], references: [id])
-  cartItems    CartItem[]
-  orderItems   OrderItem[]
-  reservations InventoryReservation[]
+  product              Product                      @relation(fields: [productId], references: [id])
+  cartItems            CartItem[]
+  orderItems           OrderItem[]
+  reservations         InventoryReservation[]
+  availabilitySnapshot VariantAvailabilitySnapshot?
 
   @@index([productId])
   @@map("variants")
@@ -181,6 +182,100 @@ model CatalogSyncLock {
   runId     String?
 
   @@map("catalog_sync_locks")
+}
+
+// ---------------------------------------------------------------------
+// Shop/Search presentation availability snapshot — Inventory Integration
+// milestone follow-up (see docs/integration/shop-search-availability-
+// snapshot.md for the full design). ERP remains the SOLE inventory
+// authority; PDP/Cart/Checkout are unchanged and continue to call ERP
+// live. This snapshot exists ONLY so a listing page (which must not call
+// ERP once per visitor — unlike PDP/Cart/Checkout, which are bounded by
+// one product page or one customer action) can show a customer-facing
+// availability hint that is closer to real than the permanently-zero
+// local `Variant.inventoryQuantity` catalog-sync deliberately never
+// writes. This table can be dropped and fully rebuilt from ERP at any
+// time with zero loss of truth — it is a cache, never a ledger.
+// ---------------------------------------------------------------------
+
+enum AvailabilitySnapshotStatus {
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+/// One row per ERP-linked Variant, upserted by the scheduled refresh job.
+/// NEVER read by PDP/Cart/Checkout/Reservations — grep this model's name
+/// outside src/modules/availability-snapshot and src/modules/catalog's
+/// listing path before ever adding a new caller.
+model VariantAvailabilitySnapshot {
+  id           String @id @default(uuid())
+  variantId    String @unique
+  /// Denormalized from Variant.erpVariantId at snapshot time — diagnostic
+  /// only (lets a stale/orphaned row be traced without a join).
+  erpVariantId String
+
+  /// in_stock | low_stock | out_of_stock — deliberately never "unknown".
+  /// Absence of a row, or a row older than the configured freshness
+  /// window, IS how "unknown"/"stale" is represented (computed at READ
+  /// time by the listing layer) — never a value stored here, so a stored
+  /// row can never be mistaken for a verified-fresh ERP answer just by
+  /// existing.
+  presentationStatus String
+
+  /// Explicit, deliberately non-authoritative marker (a string, not a
+  /// boolean, so a future second source never collides silently with
+  /// this one by accident). Always "erp_snapshot" today.
+  source String @default("erp_snapshot")
+
+  /// Last time ERP successfully answered for this specific variant —
+  /// the freshness clock every "is this row stale" check reads.
+  lastSuccessAt DateTime
+  /// Last time ANY refresh cycle attempted this variant, success or not
+  /// — lets a persistently-failing variant be distinguished from one
+  /// that is merely due for its next cycle.
+  lastAttemptAt DateTime
+  /// Short, safe summary only (an error class name) — never a stack
+  /// trace, never a raw ERP response body. Cleared on the next success.
+  lastError     String?
+
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([presentationStatus])
+  @@map("variant_availability_snapshots")
+}
+
+/// Observability — one row per refresh run, mirroring CatalogSyncRun's
+/// own shape/reasoning exactly.
+model AvailabilitySnapshotRun {
+  id            String                     @id @default(uuid())
+  status        AvailabilitySnapshotStatus @default(RUNNING)
+  startedAt     DateTime                   @default(now())
+  completedAt   DateTime?
+  correlationId String
+
+  variantsAttempted Int @default(0)
+  variantsSucceeded Int @default(0)
+  variantsFailed    Int @default(0)
+
+  errorSummary String?
+
+  @@index([status, startedAt])
+  @@map("availability_snapshot_runs")
+}
+
+/// Single-row mutual-exclusion guard, identical pattern to
+/// CatalogSyncLock (atomic conditional UPDATE, not SELECT-then-INSERT) —
+/// a separate lock row so a catalog sync and an availability refresh can
+/// never block each other, since they are otherwise fully independent.
+model AvailabilitySnapshotLock {
+  id        String    @id
+  isRunning Boolean   @default(false)
+  lockedAt  DateTime?
+  runId     String?
+
+  @@map("availability_snapshot_locks")
 }
 
 // ---------------------------------------------------------------------
