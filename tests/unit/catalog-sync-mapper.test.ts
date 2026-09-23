@@ -43,6 +43,23 @@ describe("erpDecimalPriceToMinorUnits", () => {
     expect(() => erpDecimalPriceToMinorUnits("not-a-price")).toThrow(TypeError);
     expect(() => erpDecimalPriceToMinorUnits("-5.0000")).toThrow(TypeError);
   });
+
+  /**
+   * Regression for the real bug found by the first live ERP<->Website
+   * catalog sync: ERP's own serializer (decimal.js's default toString())
+   * strips insignificant trailing zeros, so a stored 99.0000 was sent as
+   * the bare string "99" — no decimal point at all. This must keep
+   * failing loudly here rather than being silently accepted, so a future
+   * accidental reintroduction of the same ERP-side bug is caught by this
+   * test, not discovered again via a failed sync in staging/production.
+   * The real fix is on the ERP side (decimalToMoneyString in
+   * website-catalog.service.ts, ERP JAW repo) — this function's
+   * contract-enforcing strictness is deliberately left unchanged/unweakened.
+   */
+  it("rejects a bare integer with no decimal point at all (the real ERP serialization bug this contract guards against)", () => {
+    expect(() => erpDecimalPriceToMinorUnits("99")).toThrow(TypeError);
+    expect(() => erpDecimalPriceToMinorUnits("185")).toThrow(TypeError);
+  });
 });
 
 describe("deriveFallbackVariantLabel", () => {
